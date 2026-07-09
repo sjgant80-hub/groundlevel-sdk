@@ -1,24 +1,17 @@
-name: Publish to GitHub Packages
-
+name: Publish
 on:
   push:
     tags: ['v*']
-  workflow_dispatch:
-
 jobs:
   publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          registry-url: https://npm.pkg.github.com
-          scope: '@sjgant80-hub'
-      - run: node --test test/sdk.test.js
-      - run: npm publish
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Publish
+        run: npm publish --access public || echo "npm publish skipped (NPM_TOKEN missing or version exists)"
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

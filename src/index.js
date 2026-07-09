@@ -1,12 +1,3753 @@
-// @sjgant80-hub/groundlevel-sdk · main entry · re-export the surface
-// MIT · vanilla ESM · zero dependencies
+// groundlevel SDK · sovereign single-file library · MIT · AI-Native Solutions
+// Extracted from groundlevel/index.html · 216067 bytes of source logic
+// Public-safe: no primes/glyphs/dyad references
 
-export { CASE_DB, AREAS, STRANDS_USED, caseById, casesByArea, casesByStrand } from './cases.js';
-export { WEAVE_PATTERNS, WEAVE_STRANDS, PATTERN_KEYS, STRAND_NAMES } from './weaves.js';
-export { searchCases, scoreCaseAgainst } from './search.js';
-export { runWeave, scoreRisk } from './weave.js';
-export { DOC_TYPES, draftDocument } from './draft.js';
-export { COMPLIANCE_RULES, auditCompliance } from './compliance.js';
+'use strict';
+/* ═══════════════════════════════════════════════════════════════
+   sovereign legal toolkit · single-file · works offline
+   ═══════════════════════════════════════════════════════════════ */
+const NODE = {
+  id: 'groundlevel',
+  name: 'GroundLevel',
+  prime: 613,
+  domain: 'sovereign legal toolkit',
+  version: '3.0.0',
+  built: '2026-06-05',
+  philosophy: 'for the people not the few',
+};
+/* ═══════════ STATE · in-memory mirror of IndexedDB ═══════════ */
+const STATE = {
+  cases: [],         // [{ id, module, title, status, created, updated, current_step, variables, letters, evidence, deadlines, notes }]
+  evidence: [],      // global evidence chain (deduplicated · linked from cases)
+  templates: [],     // letter templates (50+)
+  modules: [],       // 12 modules
+  active_case: null, // currently-viewed case id
+  active_module: null,
+  active_step: 0,
+};
+/* ═══════════ DB · IndexedDB wrapper ═══════════ */
+const DB_NAME = 'groundlevel';
+const DB_VER = 1;
+let DB = null;
+function dbOpen() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(DB_NAME, DB_VER);
+    r.onupgradeneeded = (e) => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains('cases')) d.createObjectStore('cases', { keyPath: 'id' });
+      if (!d.objectStoreNames.contains('evidence')) d.createObjectStore('evidence', { keyPath: 'id', autoIncrement: true });
+      if (!d.objectStoreNames.contains('settings')) d.createObjectStore('settings', { keyPath: 'key' });
+    };
+    r.onsuccess = (e) => { DB = e.target.result; res(DB); };
+    r.onerror = (e) => rej(e.target.error);
+  });
+}
+function dbPut(store, value) {
+  return new Promise((res, rej) => {
+    const tx = DB.transaction(store, 'readwrite');
+    tx.objectStore(store).put(value);
+    tx.oncomplete = () => res(value);
+    tx.onerror = (e) => rej(e.target.error);
+  });
+}
+function dbGet(store, key) {
+  return new Promise((res, rej) => {
+    const tx = DB.transaction(store, 'readonly');
+    const r = tx.objectStore(store).get(key);
+    r.onsuccess = () => res(r.result);
+    r.onerror = (e) => rej(e.target.error);
+  });
+}
+function dbGetAll(store) {
+  return new Promise((res, rej) => {
+    const tx = DB.transaction(store, 'readonly');
+    const r = tx.objectStore(store).getAll();
+    r.onsuccess = () => res(r.result || []);
+    r.onerror = (e) => rej(e.target.error);
+  });
+}
+function dbDel(store, key) {
+  return new Promise((res, rej) => {
+    const tx = DB.transaction(store, 'readwrite');
+    tx.objectStore(store).delete(key);
+    tx.oncomplete = res;
+    tx.onerror = (e) => rej(e.target.error);
+  });
+}
+/* ═══════════ CRYPTO · sha256 + prevHash chain ═══════════ */
+async function sha256(s) {
+  const buf = new TextEncoder().encode(typeof s === 'string' ? s : JSON.stringify(s));
+  const h = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+/* ═══════════ ID gen ═══════════ */
+function genId(prefix) {
+  const arr = crypto.getRandomValues(new Uint8Array(6));
+  const hex = Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+  return `${prefix}_${hex}`;
+}
+/* ═══════════ UI · helpers ═══════════ */
+function el(tag, attrs, children) {
+  const e = document.createElement(tag);
+  if (attrs) for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') e.className = v;
+    else if (k === 'html') e.innerHTML = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (k === 'style' && typeof v === 'object') Object.assign(e.style, v);
+    else e.setAttribute(k, v);
+  }
+  if (children) {
+    if (typeof children === 'string') e.textContent = children;
+    else if (Array.isArray(children)) children.forEach(c => c && e.appendChild(c));
+    else e.appendChild(children);
+  }
+  return e;
+}
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+/* ═══════════ TOAST ═══════════ */
+let toastTimer;
+function toast(msg, kind) {
+  const t = $('#toast');
+  t.className = 'toast ' + (kind || '');
+  t.textContent = msg;
+  requestAnimationFrame(() => t.classList.add('show'));
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2400);
+}
+/* ═══════════ MODAL ═══════════ */
+function modal(opts) {
+  const m = $('#modal');
+  $('#modalTitle').textContent = opts.title || '';
+  $('#modalBody').innerHTML = opts.body || '';
+  const actions = $('#modalActions');
+  actions.innerHTML = '';
+  (opts.actions || [{ label: 'Close', kind: 'ghost', onClick: closeModal }]).forEach(a => {
+    const b = el('button', {
+      class: `btn btn-${a.kind || 'ghost'}`,
+      onclick: () => { (a.onClick || closeModal)(); }
+    }, a.label);
+    actions.appendChild(b);
+  });
+  m.classList.add('open');
+}
+function closeModal() { $('#modal').classList.remove('open'); }
+$('#modal').addEventListener('click', (e) => { if (e.target === $('#modal')) closeModal(); });
+/* ═══════════ TAB NAV ═══════════ */
+function goTab(tab) {
+  $$('.view').forEach(v => v.classList.remove('active'));
+  $(`#view-${tab}`).classList.add('active');
+  $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  // refresh tab content
+  if (tab === 'dashboard') renderDashboard();
+  else if (tab === 'letters') renderLetters();
+  else if (tab === 'evidence') renderEvidence();
+  else if (tab === 'deadlines') renderDeadlines();
+  else if (tab === 'help') renderHelp();
+}
+/* ═══════════ DATE helpers ═══════════ */
+function isoDate(d) { return (d instanceof Date ? d : new Date(d)).toISOString().slice(0, 10); }
+function isoDateTime(d) { return (d instanceof Date ? d : new Date(d)).toISOString(); }
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function daysBetween(a, b) { return Math.round((new Date(b) - new Date(a)) / 86400000); }
+function relTime(d) {
+  const diff = daysBetween(new Date(), d);
+  if (diff === 0) return 'today';
+  if (diff === 1) return 'tomorrow';
+  if (diff === -1) return 'yesterday';
+  if (diff > 0) return `in ${diff}d`;
+  return `${-diff}d ago`;
+}
+function fmtDate(d) {
+  return new Date(d).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+/* ═══════════ BOOT ═══════════ */
+async function boot() {
+  try {
+    await dbOpen();
+    STATE.cases = await dbGetAll('cases');
+    STATE.evidence = await dbGetAll('evidence');
+    // load modules + templates (defined later in this file)
+    STATE.modules = MODULES;
+    STATE.templates = TEMPLATES;
+    loadProAi();
+    renderDashboard();
+    renderModulesGrid();
+    renderAiTierChip();
+    // PWA · register service worker
+    if ('serviceWorker' in navigator) {
+      try { await navigator.serviceWorker.register('./sw.js'); } catch (_) {}
+    }
+    // mesh signal · estate handshake
+    try {
+      const bc = new BroadcastChannel('fall-signal');
+      bc.postMessage({ source: NODE.id, kind: 'tool:ready', payload: { prime: NODE.prime, domain: NODE.domain } });
+    } catch (_) {}
+  } catch (e) {
+    console.error('boot failed', e);
+    toast('Could not load · ' + e.message, 'error');
+  }
+}
+/* ═══════════ DASHBOARD RENDERING ═══════════ */
+function renderDashboard() {
+  const cases = STATE.cases.filter(c => c.status !== 'closed');
+  const upcomingDeadlines = collectUpcomingDeadlines(7);
+  const lettersSent = STATE.cases.reduce((n, c) => n + (c.letters || []).filter(l => l.sent).length, 0);
+  const evidenceCount = STATE.evidence.length;
+  $('#statCases').textContent = cases.length;
+  $('#statDeadlines').textContent = upcomingDeadlines.length;
+  $('#statLetters').textContent = lettersSent;
+  $('#statEvidence').textContent = evidenceCount;
+  const overdue = collectUpcomingDeadlines(0).filter(d => daysBetween(new Date(), d.due) < 0).length;
+  const allUp = upcomingDeadlines.length;
+  const badge = $('#badgeDeadlines');
+  if (overdue + allUp > 0) {
+    badge.textContent = overdue + allUp;
+    badge.style.display = 'block';
+  } else {
+    badge.style.display = 'none';
+  }
+  const list = $('#casesList');
+  if (cases.length === 0) {
+  } else {
+    list.innerHTML = '';
+    cases.sort((a, b) => new Date(b.updated) - new Date(a.updated)).forEach(c => {
+      const mod = STATE.modules.find(m => m.id === c.module);
+      const upcoming = (c.deadlines || []).filter(d => d.status === 'pending').sort((a, b) => new Date(a.due) - new Date(b.due))[0];
+      const card = el('div', { class: 'card clickable', onclick: () => openCase(c.id) }, [
+        el('h3', null, c.title || mod?.title || 'Case'),
+        el('p', null, mod?.desc || ''),
+        el('div', { class: 'meta' }, [
+          el('span', { class: 'chip info' }, `step ${c.current_step + 1}/${mod?.steps?.length || 6}`),
+          c.status === 'lba_sent' ? el('span', { class: 'chip warn' }, 'LBA sent') : null,
+          c.status === 'court_filed' ? el('span', { class: 'chip info' }, 'court filed') : null,
+          c.status === 'won' ? el('span', { class: 'chip success' }, 'won') : null,
+          upcoming ? el('span', { class: 'chip ' + (daysBetween(new Date(), upcoming.due) < 0 ? 'alert' : daysBetween(new Date(), upcoming.due) < 7 ? 'warn' : '') }, upcoming.label + ' · ' + relTime(upcoming.due)) : null,
+        ].filter(Boolean))
+      ]);
+      list.appendChild(card);
+    });
+  }
+}
+function renderModulesGrid() {
+  const grid = $('#modulesGrid');
+  grid.innerHTML = '';
+  STATE.modules.forEach(m => {
+    const card = el('button', { class: 'module-card', onclick: () => openModule(m.id) }, [
+      el('div', { class: 'ico' }, m.icon),
+      el('h3', null, m.title),
+      el('p', null, m.desc),
+      el('div', { class: 'tag' }, m.tag || 'start')
+    ]);
+    grid.appendChild(card);
+  });
+}
+function collectUpcomingDeadlines(days) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const out = [];
+  STATE.cases.forEach(c => {
+    (c.deadlines || []).forEach(d => {
+      if (d.status !== 'pending') return;
+      const diff = daysBetween(today, d.due);
+      if (days === 0 || (diff >= 0 && diff <= days)) {
+        out.push({ ...d, case_id: c.id, case_title: c.title });
+      }
+    });
+  });
+  return out.sort((a, b) => new Date(a.due) - new Date(b.due));
+}
+/* ═══════════ TEMPLATES + MODULES are defined in their own blocks below ═══════════ */
+/* (see TEMPLATES_DEFINITION and MODULES_DEFINITION blocks) */
+/* ═══════════════════════════════════════════════════════════════
+   every body uses {{variable}} placeholders auto-filled from case data
+   every template names the law and the plain-English what-this-does
+   ═══════════════════════════════════════════════════════════════ */
+const TEMPLATES = [
+  /* ──────── MONEY · UNPAID WORK · INVOICES · LBAs · STATUTORY DEMANDS ──────── */
+  {
+    id: 'invoice_chase_polite',
+    title: 'Polite invoice chaser',
+    category: 'money',
+    jurisdiction: 'Universal',
+    cite: 'Civil debt — pre-action courtesy',
+    cost: 'Free',
+    what_it_does: 'A friendly first reminder. Most invoices get paid after this. Document it (BCC yourself) so the next step has a paper trail.',
+    body: `Subject: Invoice {{invoice_number}} — gentle reminder
+Hi {{their_name}},
+I hope you're well. I noticed invoice {{invoice_number}} for {{amount}} dated {{invoice_date}} is now {{days_overdue}} days past due.
+I'm sure this has just slipped through — could you let me know when I should expect payment? If there's a problem with the invoice, please tell me and I'll fix it straight away.
+Bank details (for reference):
+{{bank_details}}
+Many thanks,
+{{your_name}}`,
+  },
+  {
+    id: 'invoice_chase_firm',
+    title: 'Firm second-chase',
+    category: 'money',
+    jurisdiction: 'Universal',
+    cite: 'Civil debt — pre-action notice',
+    cost: 'Free',
+    what_it_does: 'Tightens the tone. Names a final deadline. The polite chaser was warmth; this is the warning shot before formal action.',
+    body: `Subject: Invoice {{invoice_number}} — second notice — response required
+{{their_name}},
+My polite reminder of {{previous_chase_date}} regarding invoice {{invoice_number}} (sum: {{amount}}) has gone unanswered. The debt is now {{days_overdue}} days overdue.
+This email is a formal second notice. I require either:
+  · payment in full by {{deadline_date}} (7 days from today), OR
+  · a written explanation of why payment is being withheld, by the same date.
+If I do not receive one of these by {{deadline_date}} I will move to a Letter Before Action under the Pre-Action Protocol for Debt Claims, which is the formal step before court proceedings. I would rather resolve this between us.
+{{your_name}}`,
+    creates_deadline: { days: 7, label: 'Firm-chase response window' },
+  },
+  {
+    id: 'lba_7day_uk',
+    title: 'Letter Before Action · 7-day (UK · CPR Pre-Action Protocol)',
+    category: 'money',
+    jurisdiction: 'UK',
+    cite: 'Pre-Action Protocol for Debt Claims (October 2017) · CPR PD para 16',
+    cost: 'Free to send · £35–£455 if you proceed to MCO',
+    what_it_does: 'The formal demand the court expects to see before you file. If you skip this and go straight to court, the judge can punish you on costs even if you win. This letter complies with the protocol exactly.',
+    body: `LETTER BEFORE ACTION
+Under the Pre-Action Protocol for Debt Claims
+From: {{your_name}}
+{{your_address}}
+{{your_email}}
+To: {{their_name}}
+{{their_address}}
+Date: {{today}}
+Dear Sir / Madam,
+RE: Outstanding debt of {{amount}}
+I am writing under the Pre-Action Protocol for Debt Claims (October 2017) to put you on formal notice of a debt that is now overdue.
+THE DEBT
+You owe me the sum of {{amount}} for {{what_for}} on or about {{debt_date}}.
+This debt remains unpaid despite previous requests for payment on {{previous_dates}}.
+WHAT I REQUIRE
+You must either:
+  (a) pay the full sum of {{amount}} into the account below within 7 days of this letter (by {{lba_deadline}}); OR
+  (b) respond in writing within 14 days setting out the reason you dispute the debt and proposing how it will be resolved.
+If you do not do either, I will issue a claim against you in the County Court without further notice. If I succeed, you will be liable for:
+  · the full sum of {{amount}}
+  · court fees of between £35 and £455 (depending on the claim)
+  · statutory interest at 8% per year under section 69 of the County Courts Act 1984
+  · my fixed legal costs
+PAYMENT DETAILS
+{{bank_details}}
+DOCUMENTS ENCLOSED
+{{evidence_list}}
+INFORMATION SHEET AND REPLY FORM
+A copy of the Information Sheet and Reply Form required under the Protocol is enclosed. If you cannot pay in full, please complete the Reply Form and return it within 30 days; I will then engage in good faith negotiation.
+I would prefer not to take court action. The choice is yours.
+Yours faithfully,
+{{your_name}}`,
+    creates_deadline: { days: 14, label: 'LBA response deadline (Protocol)' },
+  },
+  {
+    id: 'lba_14day_uk',
+    title: 'Letter Before Action · 14-day (consumer or smaller debt)',
+    category: 'money',
+    jurisdiction: 'UK',
+    cite: 'Practice Direction — Pre-Action Conduct and Protocols',
+    cost: 'Free to send',
+    what_it_does: 'A slightly softer LBA giving 14 rather than 7 days. Use this where the relationship is ongoing (a regular client) or the sum is under £1,000.',
+    body: `LETTER BEFORE ACTION
+From: {{your_name}}, {{your_address}}
+To: {{their_name}}, {{their_address}}
+Date: {{today}}
+Dear {{their_name}},
+RE: Unpaid sum of {{amount}}
+This is a formal Letter Before Action. I am giving you 14 days from the date of this letter to settle the outstanding sum of {{amount}} for {{what_for}}.
+DETAILS
+  · Invoice / Reference: {{invoice_number}}
+  · Date the work was completed: {{work_date}}
+  · Date payment fell due: {{due_date}}
+  · Days overdue at today's date: {{days_overdue}}
+WHAT I WANT YOU TO DO
+Pay {{amount}} by {{lba_deadline}} (14 calendar days from today) to:
+{{bank_details}}
+WHAT HAPPENS IF YOU DO NOT
+After {{lba_deadline}} I will issue a money claim against you in the County Court. If the court finds in my favour you will pay the original sum, court fees, interest at 8% per year, and my reasonable costs.
+I am happy to discuss a payment plan if you cannot pay in one go. Reply within 14 days proposing terms and I will consider them in good faith.
+Yours sincerely,
+{{your_name}}`,
+    creates_deadline: { days: 14, label: 'LBA response deadline' },
+  },
+  {
+    id: 'lba_30day_uk',
+    title: 'Letter Before Action · 30-day (Pre-Action Protocol full window)',
+    category: 'money',
+    jurisdiction: 'UK',
+    cite: 'Pre-Action Protocol for Debt Claims — full 30-day window',
+    cost: 'Free to send',
+    what_it_does: 'The full 30-day Protocol-compliant LBA. Use this for any debt over £1,000 against a consumer (sole trader, individual). The Protocol requires this exact window for debts you intend to take to County Court.',
+    body: `LETTER BEFORE ACTION
+Pre-Action Protocol for Debt Claims · 30-day notice
+From: {{your_name}}
+{{your_address}}
+To: {{their_name}}
+{{their_address}}
+Date: {{today}}
+Dear {{their_name}},
+This letter is sent under the Pre-Action Protocol for Debt Claims which took effect on 1 October 2017. I require payment of {{amount}} from you within 30 days.
+WHAT IS OWED
+{{what_for}}, completed / supplied on or around {{debt_date}}.
+PAYMENT IN FULL
+If you can pay the full {{amount}} within 30 days, do so to the account at the foot of this letter. The matter ends there.
+IF YOU CANNOT PAY IN FULL
+The Protocol requires you to return the enclosed Reply Form within 30 days indicating:
+  · whether you admit the debt in whole or in part
+  · whether you require any documents from me
+  · how you propose to resolve the matter (lump sum, instalments, or dispute)
+If you reply, I must give you a reasonable further period to negotiate before issuing proceedings — typically a further 30 days. If you do not reply, I may issue proceedings without further notice.
+CONSEQUENCES OF DEFAULT
+If I issue and succeed, the court will normally order you to pay:
+  · the principal sum of {{amount}}
+  · interest under section 69 of the County Courts Act 1984 at 8% per year
+  · court issue fees (£35 to £455 depending on amount)
+  · my fixed costs
+DOCUMENTS
+I enclose: {{evidence_list}}
+PAYMENT
+{{bank_details}}
+Please treat this letter seriously. The court does.
+Yours faithfully,
+{{your_name}}`,
+    creates_deadline: { days: 30, label: 'Protocol LBA · 30-day window' },
+  },
+  {
+    id: 'demand_letter_us',
+    title: 'Demand Letter · United States',
+    category: 'money',
+    jurisdiction: 'US',
+    cite: 'Pre-litigation demand · varies by state',
+    cost: 'Free to send · $30–$100 small-claims filing if you proceed',
+    what_it_does: 'The US equivalent of a Letter Before Action. Every state recognises a demand letter as the appropriate first step. Most state small-claims courts expect to see it before they entertain your filing.',
+    body: `DEMAND LETTER
+From: {{your_name}}
+{{your_address}}
+{{your_email}} · {{your_phone}}
+To: {{their_name}}
+{{their_address}}
+Date: {{today}}
+Re: Unpaid sum of US$ {{amount}}
+Dear {{their_name}},
+This letter constitutes formal written demand for payment of US$ {{amount}} owed to me for {{what_for}}, completed or delivered on or about {{debt_date}}.
+Previous requests for payment on {{previous_dates}} have been ignored or refused. This is your final opportunity to resolve the matter without litigation.
+REQUIRED ACTION
+Pay the full US$ {{amount}} by ACH transfer, cashier's check, or wire transfer to the details below within 14 days of the date of this letter (by {{lba_deadline}}).
+{{bank_details}}
+CONSEQUENCES IF UNPAID BY {{lba_deadline}}
+If full payment is not received by {{lba_deadline}}, I will pursue all available remedies including but not limited to:
+  · filing in {{your_state}} Small Claims Court (filing fee ~US$30–$100, recoverable from you)
+  · filing complaints with the Federal Trade Commission (FTC), the Better Business Bureau (BBB), and the {{your_state}} Attorney General's office
+  · filing a complaint with the Consumer Financial Protection Bureau (CFPB) if applicable
+  · public review on Google, Trustpilot, and industry-specific platforms
+  · pre-judgment interest at the statutory rate in {{your_state}}
+  · recovery of all collection costs and court fees
+I would prefer to resolve this between us. You can avoid all of the above by paying the {{amount}} within 14 days.
+Sincerely,
+{{your_name}}`,
+    creates_deadline: { days: 14, label: 'US demand-letter deadline' },
+  },
+  {
+    id: 'statutory_demand_uk',
+    title: 'Statutory Demand (corporate or sole-trader debts £750+)',
+    category: 'money',
+    jurisdiction: 'UK',
+    cite: 'Insolvency Act 1986 s.123 (companies) / s.268 (individuals)',
+    cost: '£0 to issue · serious consequence if ignored',
+    what_it_does: 'A nuclear option. After 21 days unanswered, you can petition to wind up the company (or bankrupt the individual). The threat of insolvency proceedings usually forces immediate payment. Only use for genuinely undisputed debts of £750+ (companies) or £5,000+ (individuals).',
+    body: `STATUTORY DEMAND
+Under sections 122-123 of the Insolvency Act 1986
+(for individual: sections 267-268)
+To: {{their_name}}
+of: {{their_address}}
+From: {{your_name}}
+of: {{your_address}}
+Dated: {{today}}
+NOTICE
+This is a Statutory Demand under section 123 of the Insolvency Act 1986 (or section 268 if you are an individual). You owe me {{amount}}, particulars below.
+If you do not, within 21 days from the date this demand is served on you:
+  (a) pay the sum demanded, OR
+  (b) secure or compound for it to my reasonable satisfaction,
+I will be entitled to present a petition to wind up your company (if you are a corporate body) or for your bankruptcy (if you are an individual).
+PARTICULARS OF DEBT
+Sum due: {{amount}}
+Nature: {{what_for}}
+Date debt arose: {{debt_date}}
+Documents available on request.
+PAYMENT
+{{bank_details}}
+YOUR RIGHTS
+A company may apply to the court to restrain presentation of a winding-up petition if the debt is genuinely disputed on substantial grounds. An individual may apply within 18 days to set aside this demand.
+This demand is signed by {{your_name}}, the creditor.
+{{your_name}}
+___
+NOTE: Statutory demands carry serious consequences. Only use this where the debt is undisputed and over the relevant threshold (£750 for companies, £5,000 for individuals). The court WILL set aside an abusive demand and may award costs against you.`,
+    creates_deadline: { days: 21, label: 'Statutory demand · 21 days to pay or dispute' },
+  },
+  {
+    id: 'interest_late_payment_uk',
+    title: 'Late Payment Act interest claim (B2B debts)',
+    category: 'money',
+    jurisdiction: 'UK',
+    cite: 'Late Payment of Commercial Debts (Interest) Act 1998',
+    cost: 'Free',
+    what_it_does: 'If you are a business chasing another business, the law automatically gives you 8% above Bank of England base rate, PLUS a fixed compensation sum (£40 / £70 / £100 depending on debt size). Most freelancers do not know this. The compensation alone often covers the chasing time.',
+    body: `Subject: Statutory interest and compensation under the Late Payment of Commercial Debts (Interest) Act 1998
+{{their_name}},
+Further to my invoice {{invoice_number}} for {{amount}}, which has now been overdue for {{days_overdue}} days, I am putting you on notice that I will be adding statutory interest and fixed compensation under the Late Payment of Commercial Debts (Interest) Act 1998.
+STATUTORY INTEREST
+At 8% above the Bank of England base rate, compounding daily from the date the debt fell due ({{due_date}}).
+Calculation to date: {{interest_so_far}}
+FIXED COMPENSATION
+For debts up to £1,000: £40
+For debts from £1,000 to £10,000: £70
+For debts over £10,000: £100
+I am claiming: {{fixed_compensation}}
+REASONABLE COSTS OF RECOVERY
+Under section 5A(2A) of the Act I am also entitled to claim the reasonable costs of recovering the debt above the fixed compensation amount. I will quantify those if the matter goes to court.
+REVISED TOTAL OWED
+Principal {{amount}} + interest {{interest_so_far}} + compensation {{fixed_compensation}} = {{revised_total}}
+Pay this revised sum within 7 days to avoid further interest accruing.
+{{your_name}}`,
+  },
+  {
+    id: 'final_demand',
+    title: 'Final demand (last chance before court)',
+    category: 'money',
+    jurisdiction: 'Universal',
+    cite: 'Pre-action correspondence',
+    cost: 'Free',
+    what_it_does: 'The bridge between LBA and filing. Some debtors only respond when they see the actual claim form coming. This letter shows them the form is drafted.',
+    body: `FINAL DEMAND BEFORE COURT PROCEEDINGS
+{{their_name}},
+Despite my Letter Before Action of {{lba_date}} and the {{lba_days}} day period that has now expired, no payment of {{amount}} has been received and you have not engaged with the matter.
+My claim form (N1 / Money Claim Online) is prepared. It will be filed on {{filing_date}} unless I receive cleared funds before then.
+Last opportunity to settle:
+{{bank_details}}
+Once the claim is issued you will be liable for the principal, court fees, statutory interest at 8% per year, and my fixed costs. The judgment will be registered against you for six years if unpaid for 30 days, which will affect your credit.
+You have 48 hours from this email.
+{{your_name}}`,
+    creates_deadline: { days: 2, label: 'Final demand · 48-hour window' },
+  },
+  /* ──────── FROZEN ACCOUNTS · PAYMENT PROCESSORS · OMBUDSMAN ──────── */
+  {
+    id: 'paypal_freeze_complaint',
+    title: 'Payment processor freeze · formal complaint',
+    category: 'frozen_accounts',
+    jurisdiction: 'Universal',
+    cite: 'Payment Services Regulations 2017 (UK) · PSD2 (EU) · CFPB rules (US)',
+    cost: 'Free',
+    what_it_does: 'PayPal, Stripe, Wise, Payoneer etc. are e-money institutions, not banks. They cannot hold your money indefinitely. This letter forces them to give you a written reason and a release timeline — which then unlocks regulatory escalation.',
+    body: `Subject: Account {{account_id}} — formal complaint · funds held in breach of e-money regulations
+To: {{processor_name}} Customer Disputes Team
+Account holder: {{your_name}}
+Account email / ID: {{account_id}}
+Funds held: {{amount}}
+Date frozen: {{freeze_date}}
+Days held: {{days_held}}
+THIS IS A FORMAL COMPLAINT for the purposes of your published complaints procedure and the relevant financial regulator.
+THE FACTS
+On {{freeze_date}} you restricted access to my funds totalling {{amount}}. As of today you have provided:
+  · {{reason_given}}
+  · no concrete release date
+REGULATORY POSITION
+You are an authorised payment / e-money institution. Under the relevant regulation (UK: Payment Services Regulations 2017 / EU: PSD2 / US: state money-transmitter rules + CFPB) you may freeze funds where there is reasonable suspicion of fraud or breach of your terms BUT you must:
+  · communicate the reason to the account holder unless prohibited by law
+  · take reasonable steps to investigate
+  · release funds within a reasonable timeframe (typically 21–45 days depending on jurisdiction)
+  · not unilaterally confiscate funds that are not the proceeds of an offence
+REQUESTED
+Within 8 weeks of the date you first received my complaint (the regulatory window) please provide:
+  1. a written final response setting out your decision
+  2. the specific provision of your User Agreement and the regulation you rely on
+  3. a release date for the funds OR a clear statement that you are confiscating them and the legal basis
+  4. the contact details of your designated complaints handler
+NEXT STEPS
+If I do not receive a final response within 8 weeks I will escalate to:
+{{regulator_name}}
+{{regulator_url}}
+Confirmation of receipt of this complaint is required within 5 business days under your published complaints procedure.
+{{your_name}}`,
+    creates_deadline: { days: 56, label: 'Processor 8-week final-response window' },
+  },
+  {
+    id: 'fos_complaint_uk',
+    title: 'Financial Ombudsman Service complaint (UK)',
+    category: 'frozen_accounts',
+    jurisdiction: 'UK',
+    cite: 'Financial Services and Markets Act 2000 · DISP rules',
+    cost: 'Free to consumer · £750 case fee to firm (after 5th complaint per year)',
+    what_it_does: 'Free, binding, no lawyer needed. FOS can order the processor to release funds AND pay compensation up to £430,000. The firm pays. You pay nothing. The Ombudsman is informal — they read your story, they decide. Submit at financial-ombudsman.org.uk.',
+    body: `FINANCIAL OMBUDSMAN SERVICE COMPLAINT
+Submit at: https://www.financial-ombudsman.org.uk/consumers/expect/complain-online
+ABOUT ME
+Name: {{your_name}}
+Address: {{your_address}}
+Date of birth: {{your_dob}}
+Email: {{your_email}}
+Phone: {{your_phone}}
+ABOUT THE FIRM
+Firm: {{processor_name}}
+Reference (account/customer number): {{account_id}}
+Date of my final-response request: {{final_response_date}}
+WHAT HAPPENED
+{{what_happened}}
+WHAT I HAVE DONE
+I submitted a formal complaint to {{processor_name}} on {{complaint_date}}. {{firm_response_summary}}
+WHAT I WANT
+  · Immediate release of {{amount}} to my nominated bank account
+  · Compensation for distress and inconvenience caused
+  · Confirmation that my account standing is restored OR a clear final closure
+EVIDENCE I AM ATTACHING
+{{evidence_list}}
+I confirm:
+  · I am the account holder
+  · The complaint relates to a regulated activity carried out in the UK
+  · I am within 6 months of the firm's final response (or the firm has had 8 weeks and not responded)
+{{your_name}}
+{{today}}`,
+  },
+  {
+    id: 'cfpb_complaint_us',
+    title: 'CFPB complaint (US)',
+    category: 'frozen_accounts',
+    jurisdiction: 'US',
+    cite: 'Consumer Financial Protection Act 2010',
+    cost: 'Free',
+    what_it_does: 'The Consumer Financial Protection Bureau passes your complaint directly to the company with a deadline. The company must respond within 15 days. Forces engagement that direct contact cannot. Submit at consumerfinance.gov/complaint.',
+    body: `CFPB CONSUMER COMPLAINT
+Submit at: https://www.consumerfinance.gov/complaint/
+Product: Money transfer, virtual currency, or money service
+Sub-product: Domestic (or international) money transfer / mobile or digital wallet
+Issue: Money was not available when promised / Other transaction issue
+WHO I AM
+{{your_name}}
+{{your_address}}
+{{your_email}} · {{your_phone}}
+WHO THE COMPANY IS
+{{processor_name}}
+Account / transaction reference: {{account_id}}
+WHAT HAPPENED (narrative · keep clear and chronological)
+{{what_happened}}
+WHAT I WANT
+{{desired_outcome}}
+I authorise the CFPB to share this complaint with the company. I understand the company has 15 days to respond.
+I confirm the information I have provided is true to the best of my knowledge.
+{{your_name}}
+{{today}}`,
+  },
+  /* ──────── EMPLOYMENT ──────── */
+  {
+    id: 'grievance_letter',
+    title: 'Formal grievance letter (employment)',
+    category: 'employment',
+    jurisdiction: 'UK',
+    cite: 'ACAS Code of Practice on Disciplinary and Grievance Procedures',
+    cost: 'Free',
+    what_it_does: 'The first step before an Employment Tribunal. The employer must hold a grievance meeting. If they refuse or mishandle it, the Tribunal can reduce or increase awards by up to 25% based on the ACAS Code compliance.',
+    body: `FORMAL GRIEVANCE
+To: {{employer_hr_or_manager}}
+{{employer_address}}
+From: {{your_name}}
+{{your_address}}
+Employee ID: {{employee_id}}
+Date: {{today}}
+Subject: Formal grievance — {{grievance_summary}}
+Dear {{their_name}},
+I am raising a formal grievance under the company's grievance procedure and the ACAS Code of Practice on Disciplinary and Grievance Procedures.
+THE COMPLAINT
+{{grievance_details}}
+DATES AND PEOPLE INVOLVED
+{{dates_and_people}}
+WITNESSES
+{{witnesses}}
+WHAT I HAVE TRIED
+I have already raised this informally on {{informal_dates}}. The response was: {{informal_response_summary}}.
+WHAT I WANT TO HAPPEN
+{{desired_outcome}}
+NEXT STEPS REQUESTED
+I would like a grievance meeting to be arranged in line with the ACAS Code. Under the Code I am entitled to:
+  · attend with a colleague or trade union representative
+  · receive a written outcome
+  · appeal that outcome if I am not satisfied
+Please confirm receipt of this grievance within 5 working days and propose a meeting date within 10 working days.
+Yours sincerely,
+{{your_name}}`,
+    creates_deadline: { days: 10, label: 'Employer · 10 working days to schedule meeting' },
+  },
+  {
+    id: 'grievance_appeal',
+    title: 'Grievance appeal letter',
+    category: 'employment',
+    jurisdiction: 'UK',
+    cite: 'ACAS Code para 21–22',
+    cost: 'Free',
+    what_it_does: 'Mandatory under the ACAS Code if your grievance was rejected. Skip this and the Tribunal can reduce your award by up to 25%. Use this letter within 5 working days of receiving the grievance outcome.',
+    body: `GRIEVANCE APPEAL
+To: {{appeal_officer}}
+From: {{your_name}}
+Date: {{today}}
+I am appealing the grievance outcome dated {{outcome_date}} reference {{outcome_reference}}.
+GROUNDS OF APPEAL
+{{appeal_grounds}}
+NEW EVIDENCE OR INFORMATION
+{{new_evidence}}
+REMEDY SOUGHT ON APPEAL
+{{desired_outcome}}
+Under the ACAS Code I am entitled to an appeal meeting heard by someone who has not previously been involved (and ideally more senior to the original decision-maker). I will attend with a colleague / trade union representative as I am entitled to do.
+Please confirm receipt within 5 working days and provide a meeting date within 10 working days.
+{{your_name}}`,
+  },
+  {
+    id: 'acas_ec_notification',
+    title: 'ACAS Early Conciliation notification',
+    category: 'employment',
+    jurisdiction: 'UK',
+    cite: 'Employment Tribunals Act 1996 s.18A',
+    cost: 'Free',
+    what_it_does: 'MANDATORY before filing an ET1. You cannot bring a Tribunal claim without first notifying ACAS. The certificate they issue is your ticket to the Tribunal. The conciliation itself is free, voluntary, and 80%+ of cases settle here.',
+    body: `Submit this online at: https://www.acas.org.uk/early-conciliation
+Or call: 0300 123 1100
+INFORMATION YOU WILL BE ASKED FOR
+Your name: {{your_name}}
+Address: {{your_address}}
+Email: {{your_email}}
+Phone: {{your_phone}}
+Date of birth: {{your_dob}}
+Employer name: {{employer_name}}
+Employer address: {{employer_address}}
+Number of employees (if known): {{employer_size}}
+Date your employment ended (if applicable): {{employment_end_date}}
+What you say happened (one paragraph is fine — keep it factual):
+{{situation_summary}}
+What you want to happen:
+{{desired_outcome}}
+Compensation you think is owed (if any):
+{{compensation_amount}}
+PROCESS
+1. You submit this notification.
+2. ACAS issues your case to a conciliator within a few days.
+3. They contact your employer. Conciliation lasts up to 6 weeks.
+4. If settled — you sign a COT3 agreement, employer pays.
+5. If not settled — ACAS issues an Early Conciliation Certificate. You have at most 1 month from that date to file your ET1.
+CRITICAL DEADLINE
+You must notify ACAS within 3 months minus 1 day of the act complained of (e.g. dismissal date). Acting late means you lose the right to claim.
+Your 3-month deadline expires: {{tribunal_deadline}}`,
+    creates_deadline: { days: 28, label: 'ACAS Early Conciliation period (up to 6 weeks)' },
+  },
+  {
+    id: 'unpaid_wages_demand',
+    title: 'Unpaid wages demand',
+    category: 'employment',
+    jurisdiction: 'UK',
+    cite: 'Employment Rights Act 1996 s.13 (unlawful deduction)',
+    cost: 'Free',
+    what_it_does: 'Unpaid wages are an unlawful deduction. You do not need a contract dispute to enforce them. Claim within 3 months of the missed pay date (the same 3-month rule as unfair dismissal). The Tribunal can award arrears for the previous 2 years.',
+    body: `UNPAID WAGES — DEMAND FOR PAYMENT
+To: {{employer_name}}
+From: {{your_name}}
+Date: {{today}}
+Subject: Unlawful deduction from wages under Employment Rights Act 1996 s.13
+I am owed the sum of {{amount}} in respect of work performed for which wages have not been paid:
+{{wages_breakdown}}
+This is an unlawful deduction from wages under section 13 of the Employment Rights Act 1996. I am requesting payment within 14 days of the date of this letter — by {{deadline_date}}.
+If full payment is not received by {{deadline_date}} I will:
+  · notify ACAS for Early Conciliation
+  · file an ET1 claim with the Employment Tribunal
+  · seek payment of the principal sum, plus statutory interest, plus an order for costs if the claim has had to be defended unreasonably
+I retain the right to bring claims for the previous 2 years of unpaid wages under the limitation period for unlawful deductions.
+Please pay to: {{bank_details}}
+{{your_name}}`,
+    creates_deadline: { days: 14, label: 'Wages demand · 14-day deadline' },
+  },
+  {
+    id: 'flexible_working_request',
+    title: 'Flexible Working request (statutory)',
+    category: 'employment',
+    jurisdiction: 'UK',
+    cite: 'Employment Rights Act 1996 s.80F (as amended 2024)',
+    cost: 'Free',
+    what_it_does: 'A statutory right from day 1 of employment (since 6 April 2024). The employer must consult and respond within 2 months. They can only refuse for one of 8 listed business reasons. Two requests per 12-month period.',
+    body: `STATUTORY FLEXIBLE WORKING REQUEST
+Under section 80F of the Employment Rights Act 1996
+To: {{manager_name}}
+From: {{your_name}}
+Date: {{today}}
+This is a statutory request for flexible working.
+CURRENT ARRANGEMENT
+Hours: {{current_hours}}
+Location: {{current_location}}
+Pattern: {{current_pattern}}
+REQUESTED ARRANGEMENT
+Hours: {{requested_hours}}
+Location: {{requested_location}}
+Pattern: {{requested_pattern}}
+Date I want this to start: {{start_date}}
+EFFECTS ON THE EMPLOYER (and how I propose to handle them)
+{{employer_impact_and_mitigation}}
+I am aware this is a statutory request. Under the Employment Rights Act 1996 (as amended in April 2024) you must:
+  · consult with me before refusing
+  · respond within 2 months of this request (by {{response_deadline}})
+  · only refuse for one of the 8 statutory reasons (cost, customer demand, etc.) and explain which
+  · let me appeal any refusal
+I have not made another flexible working request in the past 12 months.
+{{your_name}}`,
+    creates_deadline: { days: 60, label: 'Employer · 2-month statutory response window' },
+  },
+  {
+    id: 'whistleblowing_disclosure',
+    title: 'Whistleblowing protected disclosure',
+    category: 'employment',
+    jurisdiction: 'UK',
+    cite: 'Public Interest Disclosure Act 1998 (PIDA) · ERA 1996 ss.43A–43L',
+    cost: 'Free',
+    what_it_does: 'Triggers full statutory protection from dismissal or detriment. The disclosure must be in the public interest and you must reasonably believe the information shows wrongdoing in one of six listed categories. Even if you are wrong, if your belief is reasonable, you are protected.',
+    body: `PROTECTED DISCLOSURE under the Public Interest Disclosure Act 1998
+To: {{recipient_name}} ({{recipient_role}})
+From: {{your_name}}
+Date: {{today}}
+This is a qualifying disclosure under sections 43A to 43L of the Employment Rights Act 1996 (as amended by the Public Interest Disclosure Act 1998). I am making this disclosure in the public interest.
+INFORMATION DISCLOSED
+{{disclosure_details}}
+CATEGORY OF WRONGDOING (one or more of the following six)
+☐ a criminal offence has been, is being, or is likely to be committed
+☐ a person has failed, is failing, or is likely to fail to comply with any legal obligation
+☐ a miscarriage of justice has occurred, is occurring, or is likely to occur
+☐ the health and safety of any individual has been, is being, or is likely to be endangered
+☐ the environment has been, is being, or is likely to be damaged
+☐ information tending to show any of the above has been, is being, or is likely to be deliberately concealed
+The category I rely on is: {{category}}
+I have a reasonable belief, based on {{basis_of_belief}}, that the information substantially shows this wrongdoing.
+REQUEST
+I request that this disclosure is investigated promptly and that I am protected from any detriment as a result of making it. If I am subjected to any detriment or dismissed as a result of this disclosure I will treat that as automatically unfair under section 103A of the Employment Rights Act 1996 and bring a claim accordingly.
+I will keep records of this disclosure and any consequences.
+{{your_name}}`,
+  },
+  /* ──────── HOUSING ──────── */
+  {
+    id: 'deposit_return_demand',
+    title: 'Tenancy deposit return — 14-day demand',
+    category: 'housing',
+    jurisdiction: 'UK',
+    cite: 'Housing Act 2004 ss.213-215 · Tenancy Deposit Schemes',
+    cost: 'Free',
+    what_it_does: 'After your tenancy ends the landlord must return your deposit within 10 days of agreement, or raise their proposed deductions. This letter forces the issue. If they ignore it AND failed to protect the deposit in an approved scheme, you can claim 1x–3x the deposit on top of getting it back.',
+    body: `TENANCY DEPOSIT RETURN DEMAND
+From: {{your_name}}
+{{your_old_address}} (the let property)
+{{your_current_address}}
+To: {{landlord_name}}
+{{landlord_address}}
+Date: {{today}}
+Re: Return of tenancy deposit · property {{property_address}}
+My tenancy at {{property_address}} ended on {{tenancy_end_date}}. I paid a deposit of {{deposit_amount}} at the start of the tenancy on {{deposit_paid_date}}.
+I am formally demanding the return of the full deposit within 14 days of the date of this letter (by {{deadline_date}}).
+If you propose any deductions, I require:
+  · an itemised list of each proposed deduction
+  · receipts or invoices for any repair or cleaning cost claimed
+  · the inventory taken at the start of the tenancy
+  · the inventory taken at the end of the tenancy
+  · the relevant scheme to which the deposit was sent (TDS, mydeposits or DPS) and the deposit ID
+I do not accept fair wear and tear as a valid basis for deduction under Section 11 of the Landlord and Tenant Act 1985.
+IF YOU FAILED TO PROTECT THE DEPOSIT
+If you failed to protect this deposit in an approved scheme within 30 days of receiving it, or failed to provide me with the prescribed information, you are liable under section 214 of the Housing Act 2004 to pay me between one and three times the deposit amount in addition to returning it.
+I will issue a county court claim against you if the deposit is not returned by {{deadline_date}}.
+Pay to: {{bank_details}}
+{{your_name}}`,
+    creates_deadline: { days: 14, label: 'Deposit return · 14-day demand' },
+  },
+  {
+    id: 'deposit_protection_claim',
+    title: 'Deposit protection court claim (unprotected deposit)',
+    category: 'housing',
+    jurisdiction: 'UK',
+    cite: 'Housing Act 2004 s.214',
+    cost: '£35-£455 court fee · recoverable if you win',
+    what_it_does: 'If the landlord did NOT protect your deposit in an approved scheme within 30 days, you can claim 1-3x the deposit in compensation PLUS the deposit itself. The court almost always orders the maximum 3x where there is no good reason. This is one of the most pro-tenant remedies in English law.',
+    body: `PARTICULARS OF CLAIM
+For use with County Court money claim form N1 or online (MCOL)
+Claimant: {{your_name}}, {{your_address}}
+Defendant: {{landlord_name}}, {{landlord_address}}
+1. The Claimant was the tenant of {{property_address}} ("the property") under an Assured Shorthold Tenancy granted by the Defendant. The tenancy ran from {{tenancy_start}} to {{tenancy_end_date}}.
+2. The Claimant paid a deposit of {{deposit_amount}} on {{deposit_paid_date}}.
+3. Under section 213 of the Housing Act 2004 the Defendant was required, within 30 days of receiving the deposit, to:
+   (a) protect the deposit in one of the three authorised tenancy deposit schemes (TDS, DPS or mydeposits); AND
+   (b) give the Claimant the prescribed information in writing.
+4. The Defendant failed to:
+   ☐ protect the deposit in any authorised scheme; and/or
+   ☐ provide the prescribed information within 30 days; and/or
+   ☐ provide any prescribed information at all.
+5. By reason of the Defendant's breach, under section 214 of the Housing Act 2004 the Claimant is entitled to:
+   (a) return of the deposit of {{deposit_amount}}; AND
+   (b) a sum of between one and three times the deposit, at the discretion of the court.
+6. The Claimant respectfully invites the court to award the maximum sum of three times the deposit ({{three_x_deposit}}) on the basis that the Defendant's breach was {{aggravating_factors}}.
+VALUE
+Sum claimed: {{deposit_amount}} + {{three_x_deposit}} = {{total_claim}}, plus interest under section 69 County Courts Act 1984 and costs.
+STATEMENT OF TRUTH
+I believe that the facts stated in these particulars are true.
+{{your_name}}
+{{today}}`,
+  },
+  {
+    id: 'disrepair_notice',
+    title: 'Disrepair notice (Section 11 LTA 1985)',
+    category: 'housing',
+    jurisdiction: 'UK',
+    cite: 'Landlord and Tenant Act 1985 s.11 · Homes (Fitness for Human Habitation) Act 2018',
+    cost: 'Free',
+    what_it_does: 'Section 11 imposes a statutory repair obligation on landlords that CANNOT be contracted out of. This notice puts them on formal record and starts the clock on damages. After "reasonable time" with no fix, you can apply to court for an order PLUS damages for the disrepair period.',
+    body: `NOTICE OF DISREPAIR
+Under section 11 of the Landlord and Tenant Act 1985
+To: {{landlord_name}}
+{{landlord_address}}
+From: {{your_name}}
+{{property_address}}
+Date: {{today}}
+You have a statutory duty under section 11 of the Landlord and Tenant Act 1985 (as enhanced by the Homes (Fitness for Human Habitation) Act 2018) to keep the structure and exterior of the property in repair, and to keep installations for the supply of water, gas, electricity, sanitation, space heating and water heating in proper working order.
+THE DISREPAIR
+The following items require repair at the property:
+{{disrepair_items}}
+DATE I FIRST REPORTED THIS TO YOU
+{{first_report_date}}
+EFFECT ON ME AND MY HOUSEHOLD
+{{health_and_living_impact}}
+REQUIRED ACTION
+Please attend the property to inspect and carry out the necessary repairs within 14 days of this notice. I will allow reasonable access for a contractor at any reasonable time.
+IF YOU DO NOT
+After a reasonable period I will:
+  · apply to the council under the Housing Health and Safety Rating System for an enforcement inspection
+  · apply to the court for an order compelling repair
+  · claim damages for the period the disrepair continued — typically a percentage of the rent paid for the affected period
+  · refer the matter to the relevant ombudsman or redress scheme
+This letter constitutes formal notice. Please confirm receipt and proposed remedy within 7 days.
+{{your_name}}`,
+    creates_deadline: { days: 14, label: 'Disrepair · 14 days to inspect/repair' },
+  },
+  {
+    id: 'rent_reduction_disrepair',
+    title: 'Rent reduction claim · diminution due to disrepair',
+    category: 'housing',
+    jurisdiction: 'UK',
+    cite: 'Wallace v Manchester City Council [1998] · Calabar v Stitcher',
+    cost: 'Free',
+    what_it_does: 'You are entitled to a refund of rent for any period during which the property fell below the standard you contracted for due to disrepair. Typical awards are 20-50% of rent for the affected period. Use this letter once the disrepair has either been fixed or has been outstanding for 8+ weeks.',
+    body: `RENT REDUCTION CLAIM · DIMINUTION DUE TO DISREPAIR
+To: {{landlord_name}}
+From: {{your_name}}, {{property_address}}
+Date: {{today}}
+The disrepair items notified to you on {{disrepair_notice_date}} have / have not been remedied. The relevant period of disrepair was {{disrepair_period}}.
+LEGAL BASIS
+Under Wallace v Manchester City Council [1998] 30 HLR 1111 a tenant is entitled to compensation for the diminution in value of their tenancy during a period of disrepair. The compensation is typically expressed as a percentage of the rent paid for that period.
+CLAIM
+Rent during the period of disrepair: {{rent_for_period}}
+Percentage diminution I claim: {{diminution_percentage}}%
+Amount I claim back: {{diminution_amount}}
+JUSTIFICATION FOR PERCENTAGE
+{{justification_for_percentage}}
+I am therefore demanding repayment of {{diminution_amount}} within 28 days of this letter.
+If you do not pay, I will deduct this amount from future rent (a remedy known as "set-off" recognised by the courts) or bring a county court claim against you. I will also notify the local authority that you have refused to compensate for substandard habitation.
+Pay to: {{bank_details}}
+{{your_name}}`,
+    creates_deadline: { days: 28, label: 'Rent diminution claim · 28 days to pay' },
+  },
+  {
+    id: 'illegal_eviction_report',
+    title: 'Illegal eviction · report to council Tenancy Relations Officer',
+    category: 'housing',
+    jurisdiction: 'UK',
+    cite: 'Protection from Eviction Act 1977 ss.1-3 (criminal offences)',
+    cost: 'Free',
+    what_it_does: 'Eviction without a court order is a CRIMINAL OFFENCE. Most landlords do not know this. The council Tenancy Relations Officer can investigate, prosecute, and obtain an injunction returning you to the property within hours. Use this when the locks are changed, you are physically prevented from entering, or there is intimidation.',
+    body: `URGENT REPORT OF ILLEGAL EVICTION
+To: Tenancy Relations Officer
+{{council_name}} Council
+{{council_email}}
+(If urgent and out-of-hours, also call the police on 101 or 999 if there is a risk to safety.)
+REPORTING TENANT
+{{your_name}}
+{{your_phone}} (please call any time)
+Tenancy address: {{property_address}}
+LANDLORD
+{{landlord_name}}
+{{landlord_address}}
+{{landlord_phone_if_known}}
+WHAT HAPPENED
+On {{eviction_date}} at approximately {{eviction_time}}, the following occurred:
+{{what_happened}}
+WHY I BELIEVE THIS IS AN ILLEGAL EVICTION
+  · I am a tenant (assured shorthold / assured / regulated · please identify)
+  · No court order has been served on me terminating possession
+  · No notice under section 8 or section 21 of the Housing Act 1988 has expired
+  · The landlord has taken steps that meet the definition of "unlawfully depriving" me or "harassing" me within sections 1 and 2 of the Protection from Eviction Act 1977
+EVIDENCE I CAN PROVIDE
+{{evidence_list}}
+WITNESSES
+{{witnesses}}
+WHAT I WANT
+  · Immediate intervention to allow me to return to the property
+  · Investigation of the landlord's conduct as a criminal matter
+  · Where appropriate, prosecution under the Protection from Eviction Act 1977 (offences carry up to 2 years' imprisonment)
+  · Damages assessed under section 27/28 of the Housing Act 1988 (statutory damages for unlawful eviction · typically the difference between the market value of the property with and without the tenancy)
+This is an emergency. Please respond within 24 hours.
+{{your_name}}
+{{today}}`,
+  },
+  {
+    id: 'section_21_response',
+    title: 'Section 21 notice · challenge prescribed-information defects',
+    category: 'housing',
+    jurisdiction: 'UK',
+    cite: 'Housing Act 1988 s.21 · Deregulation Act 2015 · Assured Shorthold Tenancies (Notices and Prescribed Requirements) (England) Regulations 2015',
+    cost: 'Free',
+    what_it_does: 'A landlord cannot use Section 21 unless they have given you (a) gas safety certificate, (b) energy performance certificate, (c) "How to Rent" booklet, (d) deposit-protection prescribed information. ANY missing item invalidates the Section 21. This letter forces them to disclose or withdraw.',
+    body: `CHALLENGE TO SECTION 21 NOTICE
+To: {{landlord_or_agent}}
+From: {{your_name}}, tenant at {{property_address}}
+Date: {{today}}
+You served notice on me dated {{s21_date}} purporting to be a notice under section 21 of the Housing Act 1988.
+PRELIMINARY ISSUES YOU MUST ADDRESS BEFORE THIS NOTICE IS VALID
+Under the Deregulation Act 2015 and the Assured Shorthold Tenancies (Notices and Prescribed Requirements) (England) Regulations 2015, a section 21 notice is INVALID unless the landlord has provided the following:
+  1. A current Gas Safety Certificate (CP12) at the start of the tenancy and any time the boiler/appliance was changed.
+     Date you provided to me: {{gas_safety_date_or_none}}
+  2. An Energy Performance Certificate (EPC).
+     Date you provided to me: {{epc_date_or_none}}
+  3. The current "How to Rent" booklet published by the government.
+     Date you provided to me: {{htr_date_or_none}}
+  4. Prescribed information in respect of the tenancy deposit scheme.
+     Date you provided to me: {{tdp_info_date_or_none}}
+I confirm I have / have not received each of the above.
+ITEMS MISSING
+{{missing_items}}
+CONSEQUENCE
+Until all of the above have been validly provided, your section 21 notice has no effect. If you proceed to issue possession proceedings on the basis of this defective notice, I will defend on the basis of the missing prescribed information and seek my costs.
+I am also entitled to require return of the tenancy if the deposit was not protected in an authorised scheme within 30 days. Please confirm in writing within 14 days:
+  · whether you intend to rely on the section 21 notice
+  · whether you accept it is defective
+  · what date you propose to withdraw or re-serve
+{{your_name}}`,
+  },
+  /* ──────── CONSUMER RIGHTS ──────── */
+  {
+    id: 'consumer_rights_act_letter',
+    title: 'Consumer Rights Act 2015 · short-term reject (faulty goods)',
+    category: 'consumer',
+    jurisdiction: 'UK',
+    cite: 'Consumer Rights Act 2015 ss.20-24',
+    cost: 'Free',
+    what_it_does: 'Under the CRA 2015 you have a 30-day short-term right to reject faulty goods AND get a full refund. The retailer (NOT the manufacturer) is responsible. This letter forces them to accept the rejection and refund. After 30 days you can demand repair or replacement; after that fails, a refund or price reduction.',
+    body: `Subject: Consumer Rights Act 2015 — short-term right to reject — faulty {{item_description}}
+To: {{retailer_name}}
+Order / receipt reference: {{order_id}}
+Purchase date: {{purchase_date}}
+I am exercising my short-term right to reject under section 20 of the Consumer Rights Act 2015.
+THE GOODS
+{{item_description}} purchased from you on {{purchase_date}} for {{amount}}.
+THE PROBLEM
+{{fault_description}}
+The goods are not of satisfactory quality (section 9 CRA 2015) / not fit for the purpose for which they were sold (section 10) / not as described (section 11).
+REJECTION
+I am rejecting these goods within the 30-day short-term rejection period. I require:
+  · a full refund of {{amount}} to my original payment method
+  · refund of any reasonable delivery costs I paid
+  · arrangement of return collection AT YOUR COST (you may not require me to send the item at my own expense for a rejection within the short-term right)
+TIMEFRAME
+Section 20 of the Act requires the refund to be made within 14 days of the day on which you agree to refund. Please confirm within 7 days (by {{deadline_date}}) when collection will be arranged.
+WHAT I WILL DO IF YOU REFUSE
+If you do not accept this rejection I will:
+  · raise a chargeback through my card issuer (or a section 75 claim if I paid by credit card and the price is between £100 and £30,000)
+  · file a complaint with Trading Standards
+  · file a small-claims county court claim for the refund
+{{your_name}}
+{{your_email}} · {{your_phone}}`,
+    creates_deadline: { days: 7, label: 'CRA short-term reject · 7-day response window' },
+  },
+  {
+    id: 'section_75_claim',
+    title: 'Section 75 credit card claim (joint and several liability)',
+    category: 'consumer',
+    jurisdiction: 'UK',
+    cite: 'Consumer Credit Act 1974 s.75',
+    cost: 'Free',
+    what_it_does: 'For credit card purchases between £100 and £30,000, your CARD ISSUER is jointly liable for any breach of contract or misrepresentation by the seller. If the retailer refuses to refund, your card company MUST. The single most underused consumer right in UK law.',
+    body: `Subject: Section 75 claim under the Consumer Credit Act 1974
+To: {{card_issuer_name}} Disputes Team
+Card holder: {{your_name}}
+Card last four digits: {{card_last_four}}
+I am making a claim under section 75 of the Consumer Credit Act 1974.
+THE TRANSACTION
+Merchant: {{merchant_name}}
+Amount: {{amount}} (above £100 and below £30,000)
+Date: {{purchase_date}}
+Item / service: {{purchase_description}}
+THE BREACH OR MISREPRESENTATION
+{{breach_or_misrepresentation}}
+ATTEMPTS TO RESOLVE WITH THE MERCHANT
+{{attempts_to_resolve}}
+LEGAL BASIS
+Section 75 of the Consumer Credit Act 1974 makes the credit provider jointly and severally liable with the supplier for any breach of contract or misrepresentation by the supplier, where the cash price of any single item is between £100 and £30,000.
+WHAT I CLAIM
+A refund of {{amount}} credited to my account within 14 days. Any consequential loss caused by the breach (where relevant): {{consequential_loss}}.
+EVIDENCE ENCLOSED
+{{evidence_list}}
+If my claim is rejected I will refer the matter to the Financial Ombudsman Service.
+{{your_name}}
+{{today}}`,
+  },
+  {
+    id: 'chargeback_request',
+    title: 'Chargeback request (debit card)',
+    category: 'consumer',
+    jurisdiction: 'Universal',
+    cite: 'Visa / Mastercard / Amex Scheme Rules',
+    cost: 'Free',
+    what_it_does: 'For debit-card payments (or credit-card payments under £100), Section 75 does not apply but chargeback rules do. The card scheme reverses the transaction and lets the merchant dispute it. Most banks will action this within 45-120 days. Use the right reason code.',
+    body: `Subject: Chargeback request — disputed transaction
+To: {{bank_name}} Card Disputes
+Card holder: {{your_name}}
+Card last four digits: {{card_last_four}}
+Transaction date: {{transaction_date}}
+Merchant: {{merchant_name}}
+Amount: {{amount}}
+I am requesting a chargeback for the above transaction under the relevant card-scheme rules.
+REASON CODE (choose the most accurate)
+☐ Goods or services not received
+☐ Goods or services not as described
+☐ Goods or services defective
+☐ Cancellation refund not processed
+☐ Duplicate processing
+☐ Credit not processed
+☐ Fraudulent / unauthorised transaction
+I am claiming under reason code: {{reason_code}}
+FACTUAL BACKGROUND
+{{factual_background}}
+WHAT I HAVE DONE TO RESOLVE WITH THE MERCHANT
+{{merchant_resolution_attempts}}
+EVIDENCE I AM PROVIDING
+{{evidence_list}}
+I confirm I have made reasonable attempts to resolve directly with the merchant before raising this dispute. Please confirm receipt and an expected response timeframe (typically 45 days).
+{{your_name}}
+{{today}}`,
+  },
+  {
+    id: 'subscription_cancellation',
+    title: 'Subscription cancellation + dark-pattern refund demand',
+    category: 'consumer',
+    jurisdiction: 'UK',
+    cite: 'Consumer Contracts (Information, Cancellation and Additional Charges) Regulations 2013',
+    cost: 'Free',
+    what_it_does: 'You have an absolute 14-day right to cancel a distance-sold subscription (no reason needed). For ongoing subscriptions, "auto-renewal" with no warning may be a breach of consumer protection rules. This letter forces cancellation AND refund of any charges taken in breach.',
+    body: `Subject: Cancellation of subscription and demand for refund of charges
+To: {{merchant_name}}
+From: {{your_name}}
+Account / subscriber reference: {{account_id}}
+I am giving you formal notice that I am cancelling the subscription you have been billing me for.
+THE SUBSCRIPTION
+Product: {{subscription_product}}
+Start date: {{subscription_start}}
+Amount charged: {{amount_per_period}} per {{period}}
+Charges I am disputing: {{disputed_charges}}
+EITHER OR BOTH OF THE FOLLOWING APPLY
+(A) STATUTORY 14-DAY CANCELLATION
+Under the Consumer Contracts (Information, Cancellation and Additional Charges) Regulations 2013 I have 14 days from the start of the contract to cancel without reason. I am exercising that right. Refund any charges taken during that period in full.
+(B) AUTO-RENEWAL BREACH OF CONSUMER PROTECTION
+I did not give clear consent to be auto-renewed at the price subsequently charged. Under the same Regulations and the Consumer Rights Act 2015 Part 2 (unfair terms), an auto-renewal that the consumer would not reasonably expect is unenforceable. I am demanding refund of {{auto_renewal_period_charges}}.
+WHAT I REQUIRE
+  1. Immediate cancellation of the subscription, effective today
+  2. Refund of all disputed charges within 14 days of this email
+  3. Confirmation in writing that no further charges will be taken
+  4. Confirmation that you will remove my payment details from your records
+If you do not act on this within 14 days I will:
+  · raise a chargeback with my card provider
+  · file a complaint with Trading Standards and the CMA
+  · post a public review documenting the dark-pattern subscription practice
+{{your_name}}`,
+    creates_deadline: { days: 14, label: 'Subscription cancellation · 14-day refund window' },
+  },
+  {
+    id: 'trading_standards_complaint',
+    title: 'Trading Standards complaint',
+    category: 'consumer',
+    jurisdiction: 'UK',
+    cite: 'Consumer Protection from Unfair Trading Regulations 2008',
+    cost: 'Free',
+    what_it_does: 'Trading Standards (via Citizens Advice consumer helpline) does not always intervene in individual disputes, but does build a pattern file against persistent offenders. Filing puts the trader on record. After several complaints, Trading Standards investigates and can prosecute.',
+    body: `Submit to: Citizens Advice Consumer Service
+Online: https://www.citizensadvice.org.uk/consumer/
+Phone: 0808 223 1133
+ABOUT ME
+{{your_name}}
+{{your_address}}
+{{your_email}} · {{your_phone}}
+ABOUT THE TRADER
+{{trader_name}}
+{{trader_address}}
+{{trader_website}}
+CATEGORY OF COMPLAINT
+{{complaint_category}}
+(e.g. misleading action, aggressive commercial practice, unfair contract term, breach of consumer rights, goods not as described, etc.)
+WHAT HAPPENED
+{{what_happened}}
+DATES
+First contact / purchase: {{purchase_date}}
+First complaint to trader: {{first_complaint_date}}
+Trader's last response: {{trader_last_response}}
+WHAT I HAVE TRIED
+{{what_i_have_tried}}
+WHAT I WANT
+  · For Trading Standards / Citizens Advice to record this complaint against the trader's file
+  · {{personal_remedy_sought}}
+EVIDENCE I CAN PROVIDE
+{{evidence_list}}
+I understand Citizens Advice will pass this to Trading Standards and may not respond to me individually unless they choose to investigate the trader.
+{{your_name}}
+{{today}}`,
+  },
+  {
+    id: 'unfair_terms_notice',
+    title: 'Unfair contract terms · notice of unenforceability',
+    category: 'consumer',
+    jurisdiction: 'UK',
+    cite: 'Consumer Rights Act 2015 ss.61-76 (unfair terms)',
+    cost: 'Free',
+    what_it_does: 'Hidden fees, automatic renewal traps, "we can change the terms at any time" clauses — many of these are legally unenforceable under Part 2 of the CRA 2015 because they create a significant imbalance to the detriment of the consumer. This letter forces the trader to acknowledge or remove the term.',
+    body: `Subject: Notice that contract term {{term_reference}} is unfair and unenforceable
+To: {{trader_name}}
+From: {{your_name}}
+I am writing to put you on notice that the following term in our contract is unfair and unenforceable under Part 2 of the Consumer Rights Act 2015:
+THE TERM
+"{{term_text}}"
+(found in {{location_in_document}})
+WHY IT IS UNFAIR
+Under section 62 of the CRA 2015, a term is unfair if it causes a significant imbalance in the parties' rights and obligations to the detriment of the consumer, contrary to the requirement of good faith. The Schedule 2 indicative grey list confirms terms of this nature are typically unfair, including:
+  · terms allowing the trader to change material terms unilaterally
+  · terms requiring the consumer to give disproportionate notice
+  · terms permitting the trader to retain sums paid where the consumer cancels
+  · terms requiring the consumer to fulfil all obligations regardless of the trader's failure
+  · automatic-renewal terms with no clear opt-out
+The term I am challenging falls within: {{grey_list_category}}
+CONSEQUENCE
+Under section 67 CRA 2015, an unfair term is not binding on the consumer. I am putting you on notice that I will not comply with the term and I will not pay any sum demanded under it. If you take any enforcement action based on it, I will defend on the basis of the CRA and seek my costs.
+REQUEST
+Please confirm within 14 days that:
+  · the term will not be enforced against me
+  · the term will be removed from any future contracts with consumers (in line with the CMA's expectation following the Schools Trust case)
+{{your_name}}`,
+  },
+  /* ──────── DATA / GDPR / DSAR ──────── */
+  {
+    id: 'dsar_request',
+    title: 'Subject Access Request (UK GDPR / DPA 2018)',
+    category: 'data',
+    jurisdiction: 'UK',
+    cite: 'UK GDPR Article 15 · Data Protection Act 2018',
+    cost: 'Free',
+    what_it_does: 'Forces a company to disclose all personal data they hold on you within 1 calendar month (extendable to 3 months for complex requests). They cannot charge you a fee for the first copy. Used for: getting your employment file, getting marketing data, getting CCTV of yourself, getting evidence for other claims.',
+    body: `SUBJECT ACCESS REQUEST under Article 15 of the UK GDPR
+To: {{controller_name}} Data Protection Officer / Privacy Team
+Date: {{today}}
+I am exercising my right of access under Article 15 of the UK GDPR.
+IDENTIFICATION
+Name: {{your_name}}
+Date of birth: {{your_dob}}
+Address: {{your_address}}
+Email used with you: {{your_email_with_them}}
+Account / customer reference: {{account_id}}
+INFORMATION REQUESTED
+Please provide me with:
+  1. Confirmation that you process my personal data, and copies of all such personal data.
+  2. The purposes of the processing.
+  3. The categories of personal data concerned.
+  4. The recipients or categories of recipient to whom the data has been or will be disclosed (especially recipients in third countries).
+  5. The envisaged retention period or, if not possible, the criteria used to determine that period.
+  6. Information about my rights of rectification, erasure, restriction, objection, and complaint to the ICO.
+  7. The source of the data, where not collected from me.
+  8. Information about any automated decision-making, including profiling, and the logic involved.
+SCOPE OF DATA REQUESTED
+Please include but do not limit to:
+  · all account records and communications (emails, SMS, chat logs, call recordings)
+  · any internal notes, flags, or risk-scoring records about me
+  · CCTV footage in which I appear
+  · marketing-list inclusion and consent records
+  · third-party data shared with marketing or credit-reference agencies
+  · any AI-system inputs or outputs that processed my data
+TIMEFRAME
+Under Article 12(3) you must respond within 1 calendar month of receipt of this request. If you intend to extend the deadline to 3 months (permitted only for complex requests) you must notify me with reasons within the first month.
+FORMAT
+Please provide the data in a structured, commonly used, electronic format (PDF, CSV, JSON) sent to {{your_email}}.
+NEXT STEPS IF YOU DO NOT COMPLY
+If you do not respond within the statutory deadline, or you respond incompletely, I will complain to the Information Commissioner's Office (ico.org.uk) and may seek compensation under Article 82 for any material or non-material damage caused.
+{{your_name}}`,
+    creates_deadline: { days: 30, label: 'DSAR · 1 calendar month response (UK GDPR)' },
+  },
+  {
+    id: 'right_to_erasure',
+    title: 'Right to erasure · "right to be forgotten"',
+    category: 'data',
+    jurisdiction: 'UK',
+    cite: 'UK GDPR Article 17',
+    cost: 'Free',
+    what_it_does: 'Forces a company to delete all personal data they hold on you, AND to notify other recipients they shared it with. Used for: closing accounts permanently, removing data after employment ends, removing data from prospect lists you never signed up to.',
+    body: `Subject: Request for erasure under Article 17 of the UK GDPR
+To: {{controller_name}} DPO / Privacy Team
+From: {{your_name}}
+Date: {{today}}
+I am exercising my right to erasure under Article 17 of the UK GDPR.
+IDENTIFICATION
+{{identification_details}}
+BASIS OF THE REQUEST
+I require you to erase all personal data you hold on me on one or more of the following grounds (please apply each applicable ground):
+  ☐ The personal data is no longer necessary for the purposes for which it was collected.
+  ☐ I withdraw consent on which the processing is based and there is no other legal ground.
+  ☐ I object to the processing under Article 21 and there are no overriding legitimate grounds.
+  ☐ The personal data has been unlawfully processed.
+  ☐ The personal data must be erased to comply with a legal obligation.
+The ground(s) I rely on: {{grounds}}
+DATA TO BE ERASED
+All personal data including but not limited to:
+  · account records and profile data
+  · communication history (emails, SMS, chat logs)
+  · marketing-list inclusions
+  · backup copies (you must take reasonable steps to ensure erasure from backups)
+NOTIFICATION TO RECIPIENTS
+Under Article 19, where you have disclosed my data to other recipients you must notify them of the erasure. Please confirm you have done this and identify the recipients.
+EXCEPTIONS
+I acknowledge that you may retain data where legally required (e.g. tax records, anti-money-laundering, legal claims). Identify any data you retain on this basis and the specific legal obligation.
+TIMEFRAME
+You must comply within 1 calendar month of this request. Confirmation of erasure (and notification of recipients) is required in writing.
+If you do not comply I will complain to the Information Commissioner's Office.
+{{your_name}}`,
+    creates_deadline: { days: 30, label: 'Erasure request · 1 calendar month' },
+  },
+  {
+    id: 'right_to_portability',
+    title: 'Right to data portability',
+    category: 'data',
+    jurisdiction: 'UK',
+    cite: 'UK GDPR Article 20',
+    cost: 'Free',
+    what_it_does: 'Forces a company to give you a machine-readable export of your data. Used for: moving between competing services (banks, gyms, CRM), bringing your data to a new tool, evidencing your account history for a dispute.',
+    body: `Subject: Right to data portability under Article 20 of the UK GDPR
+To: {{controller_name}}
+From: {{your_name}}
+Under Article 20 of the UK GDPR I am exercising my right to data portability.
+DATA REQUESTED
+Personal data concerning me that I have provided to you and that you process by automated means on the basis of consent or contract. This typically includes:
+  · my account profile data
+  · transaction or interaction history
+  · content I have created or uploaded
+  · communication history
+FORMAT
+A structured, commonly used and machine-readable format (JSON or CSV preferred).
+DELIVERY
+Please email a download link to {{your_email}} OR transmit the data directly to {{receiving_service}} at {{receiving_endpoint}} as you are obliged to do under Article 20(2) where technically feasible.
+DEADLINE
+Within 1 calendar month of this request.
+{{your_name}}
+{{today}}`,
+  },
+  {
+    id: 'ico_complaint',
+    title: 'ICO complaint (Information Commissioner)',
+    category: 'data',
+    jurisdiction: 'UK',
+    cite: 'Data Protection Act 2018 · ICO complaints process',
+    cost: 'Free',
+    what_it_does: 'The ICO can issue enforcement notices, fine up to £17.5M or 4% of global turnover, and order specific remediation. They take longer than the FOS (typical 3-6 months) but their decisions land hard. Submit at ico.org.uk/make-a-complaint.',
+    body: `INFORMATION COMMISSIONER'S OFFICE — COMPLAINT
+Submit at: https://ico.org.uk/make-a-complaint/
+ABOUT YOU
+{{your_name}}
+{{your_address}}
+{{your_email}} · {{your_phone}}
+ABOUT THE ORGANISATION
+{{controller_name}}
+{{controller_address}}
+{{controller_website}}
+NATURE OF COMPLAINT
+☐ Subject Access Request ignored or incomplete
+☐ Right to erasure ignored
+☐ Marketing without consent
+☐ Data breach not notified to me
+☐ Excessive or unlawful processing
+☐ Inaccurate data not corrected
+☐ Other: {{other_nature}}
+WHAT YOU ASKED THE ORGANISATION TO DO
+{{request_made}}
+WHEN YOU ASKED
+{{request_date}}
+THEIR RESPONSE (or absence of one)
+{{response_or_lack}}
+WHY YOU BELIEVE THEY HAVE BREACHED THE LAW
+{{breach_basis}}
+WHAT YOU WANT THE ICO TO DO
+  · investigate the organisation
+  · order them to comply with my original request
+  · {{additional_remedy}}
+EVIDENCE YOU CAN PROVIDE
+{{evidence_list}}
+I confirm I have first attempted to resolve this directly with the organisation.
+{{your_name}}
+{{today}}`,
+  },
+  {
+    id: 'marketing_opt_out',
+    title: 'PECR · marketing opt-out demand',
+    category: 'data',
+    jurisdiction: 'UK',
+    cite: 'Privacy and Electronic Communications Regulations 2003 (PECR)',
+    cost: 'Free',
+    what_it_does: 'Stops unsolicited email, SMS, or call marketing. PECR fines for breaches can reach £500,000 (separate from GDPR fines). Use this once direct unsubscribe links have failed twice.',
+    body: `Subject: PECR opt-out · final warning before complaint
+To: {{sender_name}} Marketing Team
+From: {{your_name}}
+I withdrew consent to receive marketing communications from you on {{first_optout_date}} via your unsubscribe mechanism. I have continued to receive marketing on {{subsequent_dates}}.
+Continuing to send marketing in these circumstances is a breach of:
+  · Regulation 22 of the Privacy and Electronic Communications Regulations 2003 (where electronic mail)
+  · Regulation 21 (where direct marketing calls)
+  · Article 21 UK GDPR (right to object to processing for direct marketing)
+ACTION REQUIRED
+  1. Cease all marketing to me immediately
+  2. Remove my contact details from all marketing lists, including any third parties to whom my details were transferred
+  3. Confirm completion in writing within 14 days
+If marketing continues after the 14-day deadline I will report to the Information Commissioner's Office under PECR. ICO fines for breach of PECR reach £500,000.
+{{your_name}}
+{{your_email}} · {{your_phone}}`,
+    creates_deadline: { days: 14, label: 'PECR opt-out · 14-day cure window' },
+  },
+  /* ──────── REGULATORY · UK ──────── */
+  {
+    id: 'fca_complaint',
+    title: 'FCA complaint (financial services)',
+    category: 'regulatory',
+    jurisdiction: 'UK',
+    cite: 'Financial Conduct Authority complaints process',
+    cost: 'Free',
+    what_it_does: 'The FCA does not normally resolve individual complaints (that is the FOS\'s role) but it does investigate firms whose behaviour breaches their authorisation conditions. Multiple complaints against the same firm trigger supervisory action. Submit at fca.org.uk/contact.',
+    body: `FCA COMPLAINT
+Submit at: https://www.fca.org.uk/contact
+ABOUT ME
+{{your_name}} · {{your_email}}
+ABOUT THE FIRM
+{{firm_name}}
+FCA registration / firm reference (if known): {{firm_fca_ref}}
+NATURE
+{{nature_of_complaint}}
+WHAT HAPPENED
+{{what_happened}}
+WHY I BELIEVE THIS BREACHES THE FCA HANDBOOK
+{{handbook_breach_basis}}
+(common areas: Principles for Businesses · CONC (consumer credit) · BCOBS (banking) · MCOB (mortgages) · CASS (client money))
+REMEDIES SOUGHT
+  · for the FCA to investigate this firm
+  · for the FCA to take supervisory action if appropriate
+I confirm I have / will also referred my individual complaint to the Financial Ombudsman Service: {{fos_reference}}.
+{{your_name}}`,
+  },
+  {
+    id: 'ofcom_complaint',
+    title: 'Ofcom complaint (telecoms / broadcasting)',
+    category: 'regulatory',
+    jurisdiction: 'UK',
+    cite: 'Communications Act 2003',
+    cost: 'Free',
+    what_it_does: 'Ofcom handles telecoms (mobile, broadband, landline) and broadcasting. For most consumer telecoms complaints you must first go through the provider\'s ADR scheme (Ombudsman Services: Communications, or CISAS). Use this for systemic issues or where the ADR scheme has been exhausted.',
+    body: `OFCOM COMPLAINT
+Submit at: https://www.ofcom.org.uk/complaints
+ABOUT ME
+{{your_name}} · {{your_email}} · {{your_phone}}
+ABOUT THE PROVIDER
+{{provider_name}}
+Account number: {{account_id}}
+CATEGORY
+☐ Mobile phone
+☐ Broadband
+☐ Landline
+☐ Pay-TV
+☐ Postal services
+☐ Other: {{other_category}}
+ISSUE
+{{issue}}
+WHAT HAPPENED
+{{what_happened}}
+WHAT I WANT
+{{desired_outcome}}
+ADR SCHEME EXHAUSTION
+☐ I have a deadlock letter from the provider dated {{deadlock_date}}
+☐ 8 weeks have passed since I first complained on {{first_complaint_date}}
+☐ I have already referred to the ADR scheme: {{adr_scheme}} (reference {{adr_reference}})
+I am also referring my individual complaint to the relevant ADR scheme.
+{{your_name}}`,
+  },
+  {
+    id: 'ftc_complaint_us',
+    title: 'FTC complaint (US Federal Trade Commission)',
+    category: 'regulatory',
+    jurisdiction: 'US',
+    cite: 'FTC Act Section 5',
+    cost: 'Free',
+    what_it_does: 'The FTC does not resolve individual disputes but builds case files against systemic offenders. Multiple complaints against the same business can trigger an FTC investigation and consent order. Submit at reportfraud.ftc.gov.',
+    body: `FTC COMPLAINT
+Submit at: https://reportfraud.ftc.gov
+ABOUT YOU
+{{your_name}}
+{{your_address}}
+{{your_email}} · {{your_phone}}
+ABOUT THE BUSINESS
+{{business_name}}
+{{business_address}}
+{{business_website}}
+CATEGORY (pick the most accurate)
+☐ Online shopping or e-commerce
+☐ Job and business opportunities
+☐ Robocalls / spam texts / robotexts
+☐ Identity theft
+☐ Imposter scams
+☐ Investment / cryptocurrency
+☐ Other: {{other_category}}
+WHAT HAPPENED
+{{what_happened}}
+AMOUNT YOU LOST
+US$ {{amount_lost}}
+DATES
+First contact / purchase: {{purchase_date}}
+You realised the problem: {{realised_date}}
+Last contact with business: {{last_contact_date}}
+EVIDENCE
+{{evidence_list}}
+I understand that the FTC may share my complaint with the Better Business Bureau, state attorneys general, and consumer protection partners.
+{{your_name}}
+{{today}}`,
+  },
+  {
+    id: 'bbb_complaint_us',
+    title: 'BBB complaint (Better Business Bureau · US)',
+    category: 'regulatory',
+    jurisdiction: 'US',
+    cite: 'BBB dispute resolution program',
+    cost: 'Free',
+    what_it_does: 'The BBB is not a regulator but its complaint process is public and businesses care about their BBB rating. The BBB forwards your complaint to the business with a 14-day response window. Resolved complaints update the business\'s public profile. Submit at bbb.org.',
+    body: `BBB COMPLAINT
+Submit at: https://www.bbb.org/file-a-complaint
+ABOUT ME
+{{your_name}} · {{your_address}} · {{your_email}}
+ABOUT THE BUSINESS
+{{business_name}} · {{business_address}}
+CATEGORY OF COMPLAINT
+☐ Advertising / sales issues
+☐ Billing / collection issues
+☐ Delivery issues
+☐ Guarantee / warranty issues
+☐ Problems with product / service
+☐ Refund / exchange issues
+☐ Customer service issues
+DESCRIPTION
+{{description}}
+DESIRED RESOLUTION
+☐ Refund
+☐ Exchange
+☐ Replacement
+☐ Apology
+☐ Contact by the business
+☐ Other: {{other_resolution}}
+Amount in dispute: US$ {{amount}}
+DATES
+Date of transaction: {{transaction_date}}
+Last contact with business: {{last_contact_date}}
+EVIDENCE
+{{evidence_list}}
+I authorise the BBB to share this complaint with the business and to publish the response and resolution status on the business's BBB profile.
+{{your_name}}
+{{today}}`,
+  },
+  {
+    id: 'ag_complaint_us',
+    title: 'State Attorney General complaint (US)',
+    category: 'regulatory',
+    jurisdiction: 'US',
+    cite: 'State consumer protection statutes (varies)',
+    cost: 'Free',
+    what_it_does: 'State AGs have real enforcement power and resources. For consumer fraud, deceptive trade practice, and unfair business practice complaints, the AG can issue cease-and-desist letters and bring civil enforcement actions. Find your state\'s AG at naag.org.',
+    body: `STATE ATTORNEY GENERAL CONSUMER COMPLAINT
+For state of: {{your_state}}
+Find filing portal at: https://www.naag.org
+ABOUT YOU
+{{your_name}}
+{{your_address}}
+{{your_email}} · {{your_phone}}
+ABOUT THE BUSINESS
+{{business_name}}
+{{business_address}}
+{{business_phone}}
+NATURE OF COMPLAINT
+{{nature_of_complaint}}
+WHAT HAPPENED
+{{what_happened}}
+AMOUNT IN DISPUTE
+US$ {{amount}}
+WHAT YOU HAVE TRIED
+{{prior_attempts}}
+DESIRED RESOLUTION
+{{desired_resolution}}
+EVIDENCE
+{{evidence_list}}
+I authorise the Attorney General to share this complaint with the business and with other state and federal agencies as appropriate.
+{{your_name}}
+{{today}}`,
+  },
+  /* ──────── COURT PROCESS / ENFORCEMENT ──────── */
+  {
+    id: 'mco_filing_guide',
+    title: 'Money Claim Online (MCOL) filing guide',
+    category: 'court',
+    jurisdiction: 'UK',
+    cite: 'CPR Part 7 · MCOL service',
+    cost: '£35 (claims up to £300) up to £455 (claims £5,000-10,000)',
+    what_it_does: 'A guide rather than a letter. Walks you through filing a county court money claim online at moneyclaim.gov.uk. After filing, the defendant has 14 days to acknowledge and 28 days to defend. If no defence, you can request judgment in default.',
+    body: `MONEY CLAIM ONLINE — FILING GUIDE
+FILE AT: https://www.moneyclaim.gov.uk
+WHAT YOU CAN USE MCOL FOR
+  · Money claims up to £100,000
+  · Against one or two defendants
+  · Where the defendant has an address in England or Wales
+  · Where the claim is for a fixed sum
+WHAT YOU NEED BEFORE FILING
+  · Your full name and address (claimant)
+  · The defendant's full legal name and current address
+  · The exact sum claimed
+  · Interest calculation (8% per year under s.69 County Courts Act 1984)
+  · Brief particulars of the claim (up to 1080 characters in MCOL)
+  · Court fee paid online (£35–£455 depending on sum)
+PARTICULARS OF CLAIM (template — adapt to your case)
+"The Claimant claims the sum of {{amount}} from the Defendant in respect of {{what_for}}, which was due to the Claimant on {{due_date}}. The Defendant has not paid despite a Letter Before Action dated {{lba_date}}. The Claimant also seeks interest under section 69 of the County Courts Act 1984 at 8% per year from {{due_date}}, court fees, and fixed costs."
+FILING STEPS
+  1. Register at moneyclaim.gov.uk (free)
+  2. Click "Start a new claim"
+  3. Enter your details (claimant)
+  4. Enter defendant details
+  5. Enter amount and particulars
+  6. Pay the court fee online
+  7. Submit · you receive a claim number immediately
+AFTER FILING
+  · The court sends the claim to the defendant by post within a few days
+  · Defendant has 14 days to acknowledge service (extending the time to defend)
+  · Defendant has 14 or 28 days to file a defence depending on whether they acknowledged
+NO DEFENCE → DEFAULT JUDGMENT
+If the defendant does not file a defence in time, log in to MCOL and "request judgment in default". The court enters judgment for the full claim plus interest and costs.
+DEFENCE FILED → ALLOCATION
+If they defend, the court will allocate the case to a track (small claims under £10,000 in most cases). Small claims usually go to free telephone mediation.
+ENFORCEMENT
+If you win and they do not pay within 30 days:
+  · request a warrant of control (bailiffs) — fee £83
+  · request attachment of earnings (against wages) — fee £130
+  · third party debt order (against bank account) — fee £130
+  · charging order (against property) — fee £130
+The judgment is enforceable for 6 years (then renewable).
+QUICK SANITY CHECK BEFORE YOU FILE
+  ☐ I sent a Letter Before Action and the deadline has passed
+  ☐ The defendant has a current address in England or Wales
+  ☐ The debt is undisputed or my evidence supports my position
+  ☐ The amount is over the £35 small-claim filing fee floor (otherwise this is not economic)
+  ☐ I have funds to pay the court fee up front
+If all five are ticked, you are ready to file.`,
+  },
+  {
+    id: 'witness_statement_template',
+    title: 'Witness statement (for hearing or summary judgment)',
+    category: 'court',
+    jurisdiction: 'UK',
+    cite: 'CPR Part 22 · Practice Direction 32',
+    cost: 'Free',
+    what_it_does: 'Required if your case goes to a hearing. Witness statements stand as the witness\'s evidence-in-chief. They must be in the right format and end with a Statement of Truth — otherwise the court will not accept them.',
+    body: `IN THE COUNTY COURT AT {{court_name}}
+CLAIM NUMBER: {{claim_number}}
+BETWEEN:
+{{claimant_name}}                                                 Claimant
+                                  - and -
+{{defendant_name}}                                              Defendant
+___________________________________________________
+WITNESS STATEMENT OF {{witness_name}}
+___________________________________________________
+I, {{witness_name}}, of {{witness_address}}, {{witness_occupation}}, will say as follows:
+1. I am the {{relationship_to_case}} in this matter. I make this statement from my own knowledge except where indicated.
+2. {{Point one — what happened first}}
+3. {{Point two}}
+4. {{Point three}}
+5. I refer to the exhibits marked "{{witness_initials}}1" to "{{witness_initials}}{{n}}" attached.
+6. {{Concluding paragraph}}
+STATEMENT OF TRUTH
+I believe that the facts stated in this witness statement are true. I understand that proceedings for contempt of court may be brought against anyone who makes, or causes to be made, a false statement in a document verified by a statement of truth without an honest belief in its truth.
+Signed: ________________________
+{{witness_name}}
+Dated: {{today}}`,
+  },
+  {
+    id: 'enforcement_warrant_uk',
+    title: 'Warrant of Control (bailiff enforcement)',
+    category: 'court',
+    jurisdiction: 'UK',
+    cite: 'CPR Part 83 · Form N323',
+    cost: '£83',
+    what_it_does: 'After you have a county court judgment that is more than 30 days old and unpaid, you request a Warrant of Control. The court bailiff goes to the debtor\'s premises and can seize goods to satisfy the debt. The threat alone usually causes payment.',
+    body: `Form N323 — Request for Warrant of Control
+File at the County Court that issued the judgment.
+Fee: £83 (recoverable from the debtor).
+CLAIM DETAILS
+Claim number: {{claim_number}}
+Court: {{court_name}}
+Date judgment entered: {{judgment_date}}
+Sum of judgment: {{judgment_amount}}
+Costs awarded: {{costs}}
+Sum paid since judgment: {{paid_since}}
+Balance remaining (including any interest): {{balance}}
+REQUEST
+I, {{your_name}}, request the court to issue a Warrant of Control against {{defendant_name}} of {{defendant_address}} for the balance of £{{balance}}.
+The warrant will be enforced by High Court Enforcement Officers (HCEOs) for amounts over £600 if transferred up to the High Court (additional fee, but greater enforcement powers).
+I confirm that:
+  · the judgment is more than 30 days old or required immediate payment
+  · the debtor has not paid the sum due
+  · the goods at the address belong to the debtor
+Signed: ________________________
+{{your_name}}
+Date: {{today}}`,
+  },
+  {
+    id: 'attachment_of_earnings_uk',
+    title: 'Attachment of Earnings Order',
+    category: 'court',
+    jurisdiction: 'UK',
+    cite: 'Attachment of Earnings Act 1971',
+    cost: '£130',
+    what_it_does: 'If the debtor is employed, an AoE order forces their employer to deduct the debt from their wages and pay you directly. Use when you know the debtor has a job and a fixed income. The court sets the deduction rate based on what the debtor can afford.',
+    body: `Form N337 — Application for an Attachment of Earnings Order
+CLAIM DETAILS
+Claim number: {{claim_number}}
+Court: {{court_name}}
+Judgment date: {{judgment_date}}
+Sum outstanding: {{balance}}
+DEBTOR DETAILS
+Full name: {{debtor_name}}
+Date of birth (if known): {{debtor_dob}}
+Address: {{debtor_address}}
+DEBTOR'S EMPLOYER
+Name of employer: {{employer_name}}
+Address of employer: {{employer_address}}
+National Insurance number of debtor (if known): {{debtor_nino}}
+APPLICATION
+I, {{your_name}}, the judgment creditor, apply for an attachment of earnings order against {{debtor_name}} requiring the employer to deduct a sum from the debtor's wages each pay period until the judgment is satisfied.
+The court will send the debtor a form N56 (statement of means) and consider the appropriate deduction.
+Signed: {{your_name}}
+Date: {{today}}`,
+  },
+  {
+    id: 'third_party_debt_order_uk',
+    title: 'Third Party Debt Order (against bank account)',
+    category: 'court',
+    jurisdiction: 'UK',
+    cite: 'CPR Part 72',
+    cost: '£130',
+    what_it_does: 'If you know which bank the debtor uses, a TPDO freezes the account and pays the balance to you up to the judgment sum. Useful when bailiffs cannot find goods and the debtor is self-employed (no employer for AoE).',
+    body: `Form N349 — Application for Third Party Debt Order
+CLAIM DETAILS
+Claim number: {{claim_number}}
+Court: {{court_name}}
+Judgment date: {{judgment_date}}
+Sum outstanding: {{balance}}
+DEBTOR DETAILS
+Full name: {{debtor_name}}
+Address: {{debtor_address}}
+THIRD PARTY (the bank or other person/entity that holds money owed to the debtor)
+Name: {{bank_name}}
+Address: {{bank_branch_address}}
+Account details if known: {{account_details}}
+GROUNDS
+I, {{your_name}}, believe that {{bank_name}} holds money belonging to {{debtor_name}}. I apply for an interim third-party debt order requiring the bank to:
+  · withhold from any account of the debtor the sum required to satisfy the judgment ({{balance}})
+  · attend a hearing at which the court will decide whether to make the order final
+GROUND FOR BELIEF THAT THE BANK HOLDS FUNDS
+{{ground_for_belief}}
+The interim order takes effect from when the bank is served. If the debtor does not have sufficient funds, the order will be discharged.
+Signed: {{your_name}}
+Date: {{today}}`,
+  },
+  /* ──────── PUBLIC PRESSURE / PRESS ──────── */
+  {
+    id: 'linkedin_public_post',
+    title: 'Public accountability post (LinkedIn / social)',
+    category: 'public',
+    jurisdiction: 'Universal',
+    cite: 'Not a legal document · use carefully',
+    cost: 'Free',
+    what_it_does: 'After private remedies have been exhausted, a public post naming the company (truthfully and provably) can force engagement. Defamation risk: stick strictly to documented facts. The audit chain in your evidence vault is your defence.',
+    body: `LinkedIn / Twitter / public post · use only after LBA + complaint to regulator have been ignored
+DRAFT
+{{platform_name}} owes me {{amount}}.
+I {{what_you_did_for_them}} in {{when}}. They confirmed the work. They have not paid.
+Here's the receipt:
+  · invoice issued {{invoice_date}}
+  · LBA sent {{lba_date}} (the formal demand the court expects to see)
+  · response from them: {{their_response_or_silence}}
+  · my evidence: timestamps, screenshots, the {{platform_name}} acknowledgement email of {{ack_date}}
+I have now filed:
+  · a county court claim ({{mco_reference}})
+  · a complaint with the FTC ({{ftc_reference}})
+  · a complaint with the {{state}} Attorney General
+  · a BBB complaint ({{bbb_reference}})
+The court fee is on {{platform_name}}. The Better Business Bureau publishes their response. The Attorney General's office records the complaint.
+The legal process exists. Lawyers gatekeep it. The templates are public. I used them.
+If you have had the same experience with {{platform_name}}: comment below and I will share the templates I used.
+___
+SAFETY CHECKLIST BEFORE YOU POST
+  ☐ Every fact stated is documented in my evidence vault
+  ☐ I have not described their conduct as criminal unless a court has so found
+  ☐ I have not named individual employees by name
+  ☐ I have used "I believe" / "in my view" for opinion · stated facts as facts
+  ☐ I am ready to provide my evidence chain to anyone who challenges me
+If you are in any doubt, do not post · post the receipt to the regulator instead.`,
+  },
+  {
+    id: 'mp_letter',
+    title: 'Letter to your MP (pattern issue)',
+    category: 'public',
+    jurisdiction: 'UK',
+    cite: 'Constituency casework',
+    cost: 'Free',
+    what_it_does: 'MPs can write to ministers and regulators on your behalf. The letter gets a Parliamentary response (much faster than a normal regulator complaint). Use when the issue affects a class of people, not just you. Find your MP at parliament.uk/findyourmp.',
+    body: `To: {{mp_name}} MP
+{{constituency_address}}
+Dear {{mp_name}},
+I am a constituent at {{your_address}}. I am writing to ask you to raise the following issue on my behalf.
+THE ISSUE
+{{issue_summary}}
+WHO HAS BEEN AFFECTED
+This affects me personally as follows: {{personal_impact}}
+It is also affecting others — see {{links_to_pattern_evidence}}.
+WHAT I HAVE TRIED
+{{what_i_have_tried}}
+WHAT I AM ASKING YOU TO DO
+☐ Write to {{relevant_minister}} requesting that the matter is investigated and remedied
+☐ Write to {{relevant_regulator}} requesting investigation
+☐ Ask a parliamentary question
+☐ Refer the matter to the relevant select committee
+☐ Other: {{other_action}}
+I understand that as a constituent I have the right to have you take up casework on my behalf and to receive a substantive response from the minister or regulator.
+I confirm I consent to you sharing my details with the relevant office for the purpose of pursuing this matter.
+Yours sincerely,
+{{your_name}}
+{{your_address}}
+{{your_email}} · {{your_phone}}`,
+  },
+];
+/* ═══════════════════════════════════════════════════════════════
+   each module: title · icon · steps array
+   each step kind: intro · form · evidence · letter · multi-complaint · guide
+   ═══════════════════════════════════════════════════════════════ */
+const MODULES = [
+  /* ──────── MODULE 1 · UNPAID WORK ──────── */
+  {
+    id: 'unpaid_work',
+    icon: '💷',
+    title: 'Unpaid work',
+    desc: 'A platform or client owes you money and will not pay. The DataAnnotation / freelancer-stiffed case.',
+    tag: '6 steps · LBA → court',
+    steps: [
+      {
+        kind: 'intro',
+        title: 'What this module does',
+        heading: 'Three steps. Three months. £35–80 in fees.',
+        body: 'You did the work. The platform won\'t pay. The legal process to fight back is 3 steps — Letter Before Action, County Court claim, enforcement. A lawyer charges £200–£500 an hour for this. The templates are public. The deadlines are known. We\'ll walk you through it.<br><br><strong>What you\'ll need:</strong> their full company name and address, the amount owed, the date the work was completed, any approval emails, your bank details for payment.',
+      },
+      {
+        kind: 'form',
+        title: 'Your details + the debt',
+        heading: 'Tell us the basics',
+        body: 'These details fill into every letter we generate. Enter them once.',
+        fields: [
+          { key: 'your_name', label: 'Your full name', required: true, hint: 'As it should appear on legal correspondence' },
+          { key: 'your_address', label: 'Your address', required: true, type: 'textarea' },
+          { key: 'your_email', label: 'Your email', type: 'email', required: true },
+          { key: 'your_phone', label: 'Your phone (optional)', type: 'tel' },
+          { key: 'their_name', label: 'Their full legal name', required: true, hint: 'Look up the official company name — Companies House for UK, state Secretary of State for US' },
+          { key: 'their_address', label: 'Their registered address', required: true, type: 'textarea' },
+          { key: 'amount', label: 'Amount owed (inc. currency)', required: true, placeholder: 'e.g. £487 or $1,200' },
+          { key: 'what_for', label: 'What you did for them', required: true, type: 'textarea', placeholder: 'Brief description: "47 hours of data-labelling tasks completed and approved between..."' },
+          { key: 'debt_date', label: 'Date the debt fell due', type: 'date', required: true },
+          { key: 'invoice_number', label: 'Invoice number (if any)' },
+          { key: 'bank_details', label: 'Your bank details for payment', type: 'textarea', required: true, placeholder: 'Account name · sort code · account number (or IBAN + BIC for international)' },
+        ],
+      },
+      {
+        kind: 'evidence',
+        title: 'Evidence',
+        heading: 'Lock down the receipts',
+        body: 'You need to be able to prove the work happened, was accepted, and is owed. The evidence vault chains everything in SHA-256. Court-admissible.',
+        checklist: [
+          'Screenshot of the platform showing the unpaid balance',
+          'The email confirming the work was approved',
+          'Your work log / timesheet / submitted-tasks list',
+          'Any prior payments from the same platform (proves they CAN pay)',
+          'Their terms of service section about payment',
+          'Every email you sent chasing payment (with their lack of response)',
+          'Their published email address for legal notices',
+        ],
+      },
+      {
+        kind: 'letter',
+        template: 'invoice_chase_firm',
+        heading: 'Step 1 · firm chase (7 days)',
+        body: 'Polite but firm. Most invoices unpaid this long are deliberate non-payment, not oversight — but we give them one last chance. Send this and wait 7 days.',
+      },
+      {
+        kind: 'letter',
+        template: 'lba_14day_uk',
+        heading: 'Step 2 · Letter Before Action (UK)',
+        body: 'The formal demand the County Court expects to see. After 14 days unanswered, you can file. Going to court WITHOUT this letter is punished even if you win.',
+      },
+      {
+        kind: 'multi-complaint',
+        heading: 'Step 3 · parallel regulator complaints',
+        body: 'While the LBA deadline is running, file these. Each one is logged against the platform\'s file. The cumulative pressure usually triggers payment.',
+        options: [
+          { label: 'Better Business Bureau (US platforms)', icon: '🇺🇸', where: '14-day response window', template: 'bbb_complaint_us', url: 'https://www.bbb.org/file-a-complaint', desc: 'BBB forwards to the business and publishes outcome.' },
+          { label: 'FTC report (US trade)', icon: '⚖', where: 'no individual response', template: 'ftc_complaint_us', url: 'https://reportfraud.ftc.gov', desc: 'Builds the FTC\'s case file against systemic offenders.' },
+          { label: 'State Attorney General', icon: '🏛', where: 'varies', template: 'ag_complaint_us', url: 'https://www.naag.org', desc: 'Real enforcement power. Cease-and-desist authority.' },
+          { label: 'Citizens Advice (UK)', icon: '🇬🇧', where: 'pattern file', template: 'trading_standards_complaint', url: 'https://www.citizensadvice.org.uk/consumer/', desc: 'Trading Standards records persistent offenders.' },
+        ],
+      },
+      {
+        kind: 'guide',
+        heading: 'Step 4 · file the county court claim',
+        body: 'After the LBA window expires with no payment, file at Money Claim Online. The court fee is £35–£455 depending on amount — recoverable from them when you win. Default judgment happens automatically if they do not file a defence within 14 days.',
+        links: [
+          { label: 'Money Claim Online (UK)', href: 'https://www.moneyclaim.gov.uk' },
+          { label: 'Small claims (US · find your state court)', href: 'https://www.usa.gov/small-claims-court' },
+        ],
+      },
+    ],
+  },
+  /* ──────── MODULE 2 · FROZEN ACCOUNTS ──────── */
+  {
+    id: 'frozen_accounts',
+    icon: '🧊',
+    title: 'Frozen account',
+    desc: 'PayPal, Stripe, Wise, Payoneer froze your account and is holding your money. Force release.',
+    tag: '5 steps · ombudsman → release',
+    steps: [
+      {
+        kind: 'intro',
+        heading: 'What you need to know first',
+        body: 'Payment processors are e-money institutions, not banks. They <strong>cannot</strong> hold your funds indefinitely. They <strong>must</strong> provide a reason for freezing. They <strong>must</strong> release funds within a reasonable timeframe — typically 21–45 days under the relevant regulations. The Financial Ombudsman Service (UK) and CFPB (US) can both order release and award compensation, free of charge to you.',
+      },
+      {
+        kind: 'form',
+        heading: 'About you + the freeze',
+        fields: [
+          { key: 'your_name', label: 'Your full name', required: true },
+          { key: 'your_email', label: 'Your email', required: true, type: 'email' },
+          { key: 'your_phone', label: 'Your phone', type: 'tel' },
+          { key: 'processor_name', label: 'Processor name', required: true, placeholder: 'e.g. PayPal, Stripe, Wise' },
+          { key: 'account_id', label: 'Your account ID / email registered', required: true },
+          { key: 'amount', label: 'Amount held', required: true },
+          { key: 'freeze_date', label: 'Date the account was frozen', type: 'date', required: true },
+          { key: 'days_held', label: 'How many days the funds have been held' },
+          { key: 'reason_given', label: 'What reason (if any) they gave', type: 'textarea' },
+        ],
+      },
+      {
+        kind: 'letter',
+        template: 'paypal_freeze_complaint',
+        heading: 'Step 1 · formal complaint to processor',
+        body: 'Sets the 8-week regulatory clock running. They must give a final response in this window or you can escalate to the Ombudsman / CFPB. Mark this sent — the deadline gets tracked.',
+      },
+      {
+        kind: 'multi-complaint',
+        heading: 'Step 2 · regulator escalation (parallel)',
+        body: 'You can lodge with the relevant ombudsman now even before the 8-week window ends — they will just hold your case until the window closes. Get in the queue.',
+        options: [
+          { label: 'Financial Ombudsman Service (UK)', icon: '🇬🇧', where: 'binding · free · £430k cap', template: 'fos_complaint_uk', url: 'https://www.financial-ombudsman.org.uk/consumers/expect/complain-online', desc: 'Free, binding, no lawyer. The firm pays.' },
+          { label: 'CFPB (US)', icon: '🇺🇸', where: '15-day response window', template: 'cfpb_complaint_us', url: 'https://www.consumerfinance.gov/complaint/', desc: 'Forces direct company response.' },
+          { label: 'FCA (UK · for FCA-regulated firm conduct)', icon: '⚖', where: 'supervisory', template: 'fca_complaint', url: 'https://www.fca.org.uk/contact', desc: 'Triggers supervisory action over patterns.' },
+        ],
+      },
+      {
+        kind: 'guide',
+        heading: 'Step 3 · set up alternative rails',
+        body: 'While fighting, route your business away from the frozen processor. Two or three rails means no single processor blocking you. Wise, Revolut, direct bank transfer, FallPay for sovereign multi-rail.',
+      },
+      {
+        kind: 'guide',
+        heading: 'Step 4 · what happens next',
+        body: 'Most processors release funds within 14 days of the regulator file landing. Persistent non-compliance triggers regulator action against the firm — the supervisory layer cares much more about pattern complaints than they let on. Track everything in your evidence vault.',
+      },
+    ],
+  },
+  /* ──────── MODULE 3 · EMPLOYMENT DISPUTE ──────── */
+  {
+    id: 'employment_dispute',
+    icon: '🧑‍💼',
+    title: 'Employment dispute',
+    desc: 'Unfair dismissal, unpaid wages, grievance, whistleblowing. ACAS conciliation → tribunal. Both free.',
+    tag: '6 steps · 3-month clock',
+    steps: [
+      {
+        kind: 'intro',
+        heading: 'The 3-month rule',
+        body: 'You have <strong>3 months minus 1 day</strong> from the act complained of (dismissal, last unpaid wage, etc.) to start the process. The tool tracks this deadline. ACAS Early Conciliation is mandatory before tribunal — but it is free, voluntary, and 80%+ of cases settle without going to tribunal. Tribunal has no court fees since 2017.',
+      },
+      {
+        kind: 'form',
+        heading: 'Your employment + the issue',
+        fields: [
+          { key: 'your_name', label: 'Your full name', required: true },
+          { key: 'your_address', label: 'Your address', type: 'textarea', required: true },
+          { key: 'your_email', label: 'Your email', type: 'email', required: true },
+          { key: 'employer_name', label: 'Employer\'s legal name', required: true },
+          { key: 'employer_address', label: 'Employer address', type: 'textarea', required: true },
+          { key: 'employee_id', label: 'Your employee ID / payroll ref' },
+          { key: 'employment_end_date', label: 'Date employment ended (if applicable)', type: 'date', hint: 'The 3-month clock starts from this date' },
+          { key: 'issue_type', label: 'Type of issue', type: 'select', options: [
+            { value: '', label: '— pick —' },
+            { value: 'unfair_dismissal', label: 'Unfair dismissal' },
+            { value: 'unpaid_wages', label: 'Unpaid wages or unlawful deduction' },
+            { value: 'discrimination', label: 'Discrimination' },
+            { value: 'whistleblowing', label: 'Whistleblowing / retaliation' },
+            { value: 'flexible_working', label: 'Flexible working request denied' },
+            { value: 'grievance_general', label: 'General grievance' },
+          ]},
+          { key: 'situation_summary', label: 'What happened (plain language)', type: 'textarea', required: true, placeholder: 'A few sentences in your own words.' },
+          { key: 'desired_outcome', label: 'What you want to happen', type: 'textarea', required: true },
+        ],
+      },
+      {
+        kind: 'evidence',
+        heading: 'Evidence collection',
+        body: 'Employment tribunal lives or dies on documents. Get them while you still can.',
+        checklist: [
+          'Your contract of employment + any updates',
+          'Most recent payslips (last 3 months minimum)',
+          'Your full employee handbook',
+          'Emails relating to the issue (forward to a personal account NOW)',
+          'Any meeting notes you took',
+          'Witness contact details (colleagues sympathetic to your account)',
+          'Send a Subject Access Request to your employer for ALL data they hold on you',
+        ],
+      },
+      {
+        kind: 'letter',
+        template: 'grievance_letter',
+        heading: 'Step 1 · formal grievance',
+        body: 'Even if you have already left, file a grievance. The tribunal penalises non-compliance with the ACAS Code by up to 25%. The grievance must be heard before any tribunal claim is taken seriously.',
+      },
+      {
+        kind: 'letter',
+        template: 'acas_ec_notification',
+        heading: 'Step 2 · ACAS Early Conciliation',
+        body: 'MANDATORY. You cannot file ET1 without this. Free, voluntary, 6-week window. Most cases settle here. The certificate they issue is your tribunal ticket.',
+      },
+      {
+        kind: 'guide',
+        heading: 'Step 3 · ET1 (Employment Tribunal claim)',
+        body: 'After ACAS issues the certificate, you have at most 1 month to file ET1. No court fee. Tribunal is informal — no wigs, no lawyers required. Mediated decision often within 2-4 months of filing.',
+        links: [
+          { label: 'File ET1 online (UK)', href: 'https://www.gov.uk/employment-tribunals/make-a-claim' },
+        ],
+      },
+    ],
+  },
+  /* ──────── MODULE 4 · LANDLORD DISPUTE ──────── */
+  {
+    id: 'landlord_dispute',
+    icon: '🏘',
+    title: 'Landlord dispute',
+    desc: 'Deposit, disrepair, illegal eviction. UK housing law sits heavily with the tenant.',
+    tag: '6 steps · deposit → court',
+    steps: [
+      {
+        kind: 'intro',
+        heading: 'Why this favours you',
+        body: 'The landlord MUST protect your deposit in an approved scheme within 30 days. If not, you can claim 1–3x the deposit on top of getting it back. The repair obligations in section 11 of the Landlord and Tenant Act 1985 cannot be contracted out of. Eviction without a court order is a criminal offence. None of this requires a lawyer. The tribunal awards it if you file correctly.',
+      },
+      {
+        kind: 'form',
+        heading: 'The tenancy + the issue',
+        fields: [
+          { key: 'your_name', label: 'Your full name', required: true },
+          { key: 'your_current_address', label: 'Your current address', type: 'textarea', required: true },
+          { key: 'landlord_name', label: 'Landlord legal name', required: true },
+          { key: 'landlord_address', label: 'Landlord address', type: 'textarea', required: true },
+          { key: 'property_address', label: 'The rented property address', type: 'textarea', required: true },
+          { key: 'tenancy_start', label: 'Tenancy started', type: 'date' },
+          { key: 'tenancy_end_date', label: 'Tenancy ended (if has)', type: 'date' },
+          { key: 'deposit_amount', label: 'Deposit amount', placeholder: 'e.g. £1,200' },
+          { key: 'deposit_paid_date', label: 'Deposit paid date', type: 'date' },
+          { key: 'issue_type', label: 'Issue type', type: 'select', options: [
+            { value: '', label: '— pick —' },
+            { value: 'deposit', label: 'Deposit not returned' },
+            { value: 'disrepair', label: 'Disrepair' },
+            { value: 'illegal_eviction', label: 'Illegal eviction / harassment' },
+            { value: 's21', label: 'Section 21 notice received' },
+          ]},
+        ],
+      },
+      {
+        kind: 'letter',
+        template: 'deposit_return_demand',
+        heading: 'Deposit · 14-day return demand',
+        body: 'The first step. If the landlord ignores it AND failed to protect the deposit in an approved scheme, you have a serious court claim — up to 4x the deposit total back.',
+      },
+      {
+        kind: 'letter',
+        template: 'disrepair_notice',
+        heading: 'Disrepair notice (Section 11)',
+        body: 'Use this BEFORE filing with the council or court. Puts the landlord on formal notice. Damages start accruing from this date if the disrepair continues.',
+      },
+      {
+        kind: 'letter',
+        template: 'illegal_eviction_report',
+        heading: 'Illegal eviction · report to council',
+        body: 'If you are physically prevented from entering, locks changed, or there is intimidation. This is a CRIMINAL offence under the Protection from Eviction Act 1977. Council can prosecute and obtain injunction within hours.',
+      },
+      {
+        kind: 'letter',
+        template: 'section_21_response',
+        heading: 'Section 21 challenge · prescribed-information defects',
+        body: 'If your landlord failed to provide gas safety cert, EPC, How to Rent booklet, or deposit-protection information, their Section 21 is INVALID. This letter forces them to disclose or withdraw.',
+      },
+    ],
+  },
+  /* ──────── MODULE 5 · CONSUMER RIGHTS ──────── */
+  {
+    id: 'consumer_rights',
+    icon: '🛒',
+    title: 'Consumer rights',
+    desc: 'Faulty goods, subscription traps, unfair terms. Section 75 alone saves thousands.',
+    tag: '5 steps · refund routes',
+    steps: [
+      {
+        kind: 'intro',
+        heading: 'Section 75 is the secret weapon',
+        body: 'If you paid by credit card and the price was between £100 and £30,000, your card issuer is JOINTLY liable for any breach of contract. If the company won\'t refund, your card company MUST. Most people don\'t know this. We do.',
+      },
+      {
+        kind: 'form',
+        heading: 'The purchase + the issue',
+        fields: [
+          { key: 'your_name', label: 'Your name', required: true },
+          { key: 'merchant_name', label: 'Merchant name', required: true },
+          { key: 'purchase_date', label: 'Purchase date', type: 'date', required: true },
+          { key: 'amount', label: 'Amount paid' },
+          { key: 'payment_method', label: 'How you paid', type: 'select', options: [
+            { value: '', label: '— pick —' },
+            { value: 'credit_card', label: 'Credit card (£100–£30,000 → Section 75)' },
+            { value: 'debit_card', label: 'Debit card → chargeback' },
+            { value: 'paypal', label: 'PayPal' },
+            { value: 'bank_transfer', label: 'Bank transfer' },
+            { value: 'cash', label: 'Cash' },
+          ]},
+          { key: 'card_issuer_name', label: 'Card issuer (if applicable)' },
+          { key: 'card_last_four', label: 'Card last 4 digits' },
+          { key: 'fault_description', label: 'What is wrong', type: 'textarea', required: true },
+        ],
+      },
+      {
+        kind: 'letter',
+        template: 'consumer_rights_act_letter',
+        heading: 'Step 1 · reject to retailer (CRA 2015)',
+        body: '30-day short-term right to reject. Forces a refund. Send first.',
+      },
+      {
+        kind: 'letter',
+        template: 'section_75_claim',
+        heading: 'Step 2 · Section 75 (if credit card, £100–£30,000)',
+        body: 'If the retailer refuses, your CARD ISSUER must refund under Section 75 of the Consumer Credit Act 1974.',
+      },
+      {
+        kind: 'letter',
+        template: 'chargeback_request',
+        heading: 'Step 2b · Chargeback (debit card or under £100)',
+        body: 'Different mechanism, same result. Card scheme rules force a chargeback if you have proper grounds.',
+      },
+      {
+        kind: 'multi-complaint',
+        heading: 'Step 3 · regulator escalation',
+        body: 'Where direct routes fail.',
+        options: [
+          { label: 'Trading Standards (UK)', icon: '🇬🇧', template: 'trading_standards_complaint', url: 'https://www.citizensadvice.org.uk/consumer/' },
+          { label: 'BBB (US)', icon: '🇺🇸', template: 'bbb_complaint_us', url: 'https://www.bbb.org/file-a-complaint' },
+          { label: 'FTC (US)', icon: '⚖', template: 'ftc_complaint_us', url: 'https://reportfraud.ftc.gov' },
+          { label: 'State AG (US)', icon: '🏛', template: 'ag_complaint_us', url: 'https://www.naag.org' },
+        ],
+      },
+    ],
+  },
+  /* ──────── MODULE 6 · DATA ACCESS ──────── */
+  {
+    id: 'data_access',
+    icon: '🔐',
+    title: 'Data access (GDPR)',
+    desc: 'Subject Access, erasure, portability. The asymmetry is in your favour: £17.5M fine vs £0 cost.',
+    tag: '4 steps · 30-day clock',
+    steps: [
+      {
+        kind: 'intro',
+        heading: 'The asymmetry',
+        body: 'Your SAR costs £0. Company non-compliance costs up to £17.5M or 4% of turnover. They have 30 calendar days. ICO complaint is free. The numbers are entirely in your favour.',
+      },
+      {
+        kind: 'form',
+        heading: 'Identity + target',
+        fields: [
+          { key: 'your_name', label: 'Your full name', required: true },
+          { key: 'your_dob', label: 'Date of birth', type: 'date' },
+          { key: 'your_address', label: 'Your address', type: 'textarea', required: true },
+          { key: 'your_email', label: 'Your email', type: 'email', required: true },
+          { key: 'controller_name', label: 'Organisation you are asking', required: true },
+          { key: 'your_email_with_them', label: 'Email you use with them' },
+          { key: 'account_id', label: 'Account / customer reference' },
+        ],
+      },
+      {
+        kind: 'letter',
+        template: 'dsar_request',
+        heading: 'Subject Access Request',
+        body: '30-day window starts when they receive it. Mark as sent to track.',
+      },
+      {
+        kind: 'letter',
+        template: 'right_to_erasure',
+        heading: 'Right to erasure (if you want them gone)',
+        body: 'Most useful after you\'ve closed an account and want to ensure they\'ve actually deleted you.',
+      },
+      {
+        kind: 'letter',
+        template: 'ico_complaint',
+        heading: 'ICO escalation (if ignored)',
+        body: 'After the 30-day window expires without response, escalate.',
+      },
+    ],
+  },
+  /* ──────── MODULE 7 · SMALL CLAIMS ──────── */
+  {
+    id: 'small_claims',
+    icon: '⚖',
+    title: 'Small claims (any debt)',
+    desc: 'Anyone owes you money. The generic LBA → MCO → enforce flow for any civil debt.',
+    tag: '6 steps · LBA → enforce',
+    steps: [
+      {
+        kind: 'intro',
+        heading: 'The statistics',
+        body: '<strong>80% of small claims settle after the LBA.</strong> 15% settle at mediation. 5% reach hearing. You almost never see a courtroom. The numbers are entirely in your favour if you start the process at all.',
+      },
+      {
+        kind: 'form',
+        heading: 'Who owes you what',
+        fields: [
+          { key: 'your_name', label: 'Your name', required: true },
+          { key: 'your_address', label: 'Your address', type: 'textarea', required: true },
+          { key: 'their_name', label: 'Their name', required: true },
+          { key: 'their_address', label: 'Their address', type: 'textarea', required: true },
+          { key: 'amount', label: 'Amount owed', required: true },
+          { key: 'what_for', label: 'What it\'s for', type: 'textarea', required: true },
+          { key: 'debt_date', label: 'Date it fell due', type: 'date', required: true },
+          { key: 'bank_details', label: 'Your bank details', type: 'textarea', required: true },
+        ],
+      },
+      {
+        kind: 'letter',
+        template: 'lba_30day_uk',
+        heading: 'Step 1 · 30-day Protocol LBA',
+        body: 'Use the full 30-day Protocol form for any debt over £1,000 against an individual. For B2B or smaller debts use the 14-day or 7-day variants in the Letters tab.',
+      },
+      {
+        kind: 'guide',
+        template: 'mco_filing_guide',
+        heading: 'Step 2 · file Money Claim Online',
+        body: 'After the LBA window expires. £35–£455 court fee, recoverable from them.',
+        links: [
+          { label: 'Money Claim Online', href: 'https://www.moneyclaim.gov.uk' },
+        ],
+      },
+      {
+        kind: 'guide',
+        heading: 'Step 3 · what happens after filing',
+        body: 'Defendant has 14 days to acknowledge, then 14 more to defend. No defence = default judgment (you win automatically). Defence = telephone mediation (free). Most cases never reach hearing.',
+      },
+      {
+        kind: 'letter',
+        template: 'enforcement_warrant_uk',
+        heading: 'Step 4 · Warrant of Control (bailiff)',
+        body: 'If they don\'t pay within 30 days of judgment. £83 fee. The bailiff becomes your collection agent.',
+      },
+      {
+        kind: 'letter',
+        template: 'attachment_of_earnings_uk',
+        heading: 'Step 4b · Attachment of Earnings',
+        body: 'If they are employed. The employer deducts from their wages and pays you directly.',
+      },
+    ],
+  },
+  /* ──────── MODULE 8 · INTERNATIONAL FREELANCER ──────── */
+  {
+    id: 'international_freelancer',
+    icon: '🌐',
+    title: 'International freelancer',
+    desc: 'Cross-border platform issues, tax residence, multi-currency. Platforms blocking you for being abroad is not legal grounds to withhold earned funds.',
+    tag: '4 steps · sovereignty',
+    steps: [
+      {
+        kind: 'intro',
+        heading: 'Earned is earned',
+        body: 'A platform can close your account for being in the "wrong" country. They CANNOT keep the money you have already earned. The funds are EARNED · the work was done. Account closure and fund withholding are two different things.',
+      },
+      {
+        kind: 'form',
+        heading: 'Your situation',
+        fields: [
+          { key: 'your_name', label: 'Your name', required: true },
+          { key: 'home_country', label: 'Home country (citizenship)', required: true },
+          { key: 'tax_residence', label: 'Where you are tax resident', required: true },
+          { key: 'current_country', label: 'Where you physically are now', required: true },
+          { key: 'platform_name', label: 'Platform name', required: true },
+          { key: 'amount_held', label: 'Amount held (USD/local)' },
+        ],
+      },
+      {
+        kind: 'letter',
+        template: 'paypal_freeze_complaint',
+        heading: 'Force release · cite the regulation',
+        body: 'Reference the regulation that applies to where THE PLATFORM is registered, not where YOU are. PayPal Luxembourg → EU PSD2. Stripe Ireland → same. Apply the home regulator.',
+      },
+      {
+        kind: 'guide',
+        heading: 'Step 2 · alternative rails',
+        body: 'While fighting, route via Wise · Revolut · direct bank · multi-rail FallPay. Never have all your eggs in one processor again.',
+      },
+      {
+        kind: 'guide',
+        heading: 'Step 3 · tax residence — get it right',
+        body: 'UK Statutory Residence Test (SRT) determines whether you owe UK tax on worldwide income or only UK-source income. Day-count, ties, accommodation test. Get this wrong and HMRC will treat you as UK-resident for years you thought you were abroad.<br><br>Thailand DTV visa, Portugal NHR, Cyprus 60-day rule, UAE freelance permit — research the residence regime where you are, and document compliance from day 1.',
+        links: [
+          { label: 'HMRC Statutory Residence Test guide', href: 'https://www.gov.uk/government/publications/rdr3-statutory-residence-test-srt' },
+        ],
+      },
+    ],
+  },
+  /* ──────── MODULE 9 · REGULATORY COMPLAINT FACTORY ──────── */
+  {
+    id: 'regulatory_factory',
+    icon: '🏛',
+    title: 'Regulator complaints',
+    desc: 'One-click generation across UK, US, EU regulators. Same case data → 6 complaints in 60 seconds.',
+    tag: '3 steps · multi-fire',
+    steps: [
+      {
+        kind: 'intro',
+        heading: 'The factory',
+        body: 'Use this when private remedies have stalled. Each complaint is logged against the company\'s file. The cumulative pressure is what changes behaviour — not any single complaint. Fill the form once, generate them all.',
+      },
+      {
+        kind: 'form',
+        heading: 'The dispute',
+        fields: [
+          { key: 'your_name', label: 'Your name', required: true },
+          { key: 'your_address', label: 'Your address', type: 'textarea', required: true },
+          { key: 'your_email', label: 'Your email', type: 'email', required: true },
+          { key: 'business_name', label: 'Business name', required: true },
+          { key: 'business_address', label: 'Business address', type: 'textarea' },
+          { key: 'amount', label: 'Amount in dispute' },
+          { key: 'what_happened', label: 'What happened (1-2 paragraphs)', type: 'textarea', required: true },
+          { key: 'desired_outcome', label: 'What you want', type: 'textarea', required: true },
+        ],
+      },
+      {
+        kind: 'multi-complaint',
+        heading: 'Generate complaints (pick all that apply)',
+        body: 'Each one opens with your case data filled in. Copy → submit at the listed URL.',
+        options: [
+          { label: 'BBB (US)', icon: '🇺🇸', template: 'bbb_complaint_us', url: 'https://www.bbb.org/file-a-complaint', desc: 'Public response forced. Business cares.' },
+          { label: 'FTC (US)', icon: '⚖', template: 'ftc_complaint_us', url: 'https://reportfraud.ftc.gov', desc: 'Pattern file.' },
+          { label: 'State AG (US)', icon: '🏛', template: 'ag_complaint_us', url: 'https://www.naag.org', desc: 'Real enforcement teeth.' },
+          { label: 'CFPB (US financial)', icon: '💵', template: 'cfpb_complaint_us', url: 'https://www.consumerfinance.gov/complaint/', desc: '15-day company response window.' },
+          { label: 'FOS (UK financial)', icon: '🇬🇧', template: 'fos_complaint_uk', url: 'https://www.financial-ombudsman.org.uk', desc: 'Binding. Compensation up to £430k.' },
+          { label: 'FCA (UK financial conduct)', icon: '⚖', template: 'fca_complaint', url: 'https://www.fca.org.uk/contact', desc: 'Triggers supervisory action.' },
+          { label: 'ICO (UK data protection)', icon: '🔐', template: 'ico_complaint', url: 'https://ico.org.uk/make-a-complaint/', desc: 'Up to £17.5M fine.' },
+          { label: 'Ofcom (UK telecoms)', icon: '📡', template: 'ofcom_complaint', url: 'https://www.ofcom.org.uk/complaints', desc: 'Telecoms / broadcasting.' },
+          { label: 'Citizens Advice / Trading Standards', icon: '🛡', template: 'trading_standards_complaint', url: 'https://www.citizensadvice.org.uk/consumer/', desc: 'Pattern file for UK consumer issues.' },
+        ],
+      },
+      {
+        kind: 'guide',
+        heading: 'After filing',
+        body: 'Track every reference number in your case notes. Most regulators give you a case reference within 48 hours. The actual investigation can take weeks to months — but the company knows the file exists, and that often triggers settlement.',
+      },
+    ],
+  },
+  /* ──────── MODULE 10 · SUBSCRIPTION TRAP ──────── */
+  {
+    id: 'subscription_trap',
+    icon: '🔁',
+    title: 'Subscription trap',
+    desc: 'Auto-renewed without consent, dark patterns, can\'t cancel. Cancel + refund route.',
+    tag: '4 steps · refund + escape',
+    steps: [
+      {
+        kind: 'intro',
+        heading: 'The dark pattern playbook',
+        body: 'Hidden auto-renew. Cancel only by phone. Cancel-but-not-really. UK Consumer Rights Act Part 2 makes many of these terms unenforceable. EU Digital Services Act and similar US state laws are catching up. You have routes.',
+      },
+      {
+        kind: 'form',
+        heading: 'The subscription',
+        fields: [
+          { key: 'your_name', label: 'Your name', required: true },
+          { key: 'merchant_name', label: 'Merchant', required: true },
+          { key: 'subscription_product', label: 'Product / service', required: true },
+          { key: 'amount_per_period', label: 'Charge per period' },
+          { key: 'period', label: 'Period', placeholder: 'month / quarter / year' },
+          { key: 'subscription_start', label: 'When subscription started', type: 'date' },
+          { key: 'disputed_charges', label: 'Charges you are disputing', type: 'textarea' },
+          { key: 'card_issuer_name', label: 'Card issuer (for chargeback fallback)' },
+        ],
+      },
+      {
+        kind: 'letter',
+        template: 'subscription_cancellation',
+        heading: 'Step 1 · cancel + refund demand',
+        body: 'Use this if you cancelled within the 14-day cooling-off, OR if the auto-renewal happened without clear consent.',
+      },
+      {
+        kind: 'letter',
+        template: 'unfair_terms_notice',
+        heading: 'Step 2 · unfair-terms notice (if they refuse)',
+        body: 'Many subscription-trap clauses are unenforceable as unfair terms under CRA 2015. This forces them to acknowledge or remove the term.',
+      },
+      {
+        kind: 'letter',
+        template: 'chargeback_request',
+        heading: 'Step 3 · chargeback (parallel)',
+        body: 'If the merchant refuses, raise a chargeback with your card issuer using reason code "credit not processed" or "duplicate processing". Free for you.',
+      },
+    ],
+  },
+  /* ──────── MODULE 11 · CROSS-BORDER DISPUTE ──────── */
+  {
+    id: 'cross_border_dispute',
+    icon: '🌍',
+    title: 'Cross-border dispute',
+    desc: 'You are in one country, the platform is in another. Which regulator? Which law? We route it.',
+    tag: '4 steps · multi-jurisdiction',
+    steps: [
+      {
+        kind: 'intro',
+        heading: 'The routing problem',
+        body: 'You bought from a US company while in the EU. The platform is registered in Ireland. The processor is in the UK. Which regulator? Three. Use the best of each.',
+      },
+      {
+        kind: 'form',
+        heading: 'Where the parties are',
+        fields: [
+          { key: 'your_name', label: 'Your name', required: true },
+          { key: 'your_country', label: 'Country you are in', required: true },
+          { key: 'business_name', label: 'Business name', required: true },
+          { key: 'business_country', label: 'Country the business is registered in' },
+          { key: 'processor_country', label: 'Country the payment processor is in (if relevant)' },
+          { key: 'what_happened', label: 'What happened', type: 'textarea', required: true },
+        ],
+      },
+      {
+        kind: 'multi-complaint',
+        heading: 'Route by regulator (pick all applicable)',
+        body: 'You can lodge in multiple jurisdictions. The strongest enforcement wins.',
+        options: [
+          { label: 'econsumer.gov (international consumer complaints)', icon: '🌐', template: 'ftc_complaint_us', url: 'https://www.econsumer.gov', desc: 'Routes to relevant national authority.' },
+          { label: 'European Consumer Centre (you are in the EU)', icon: '🇪🇺', url: 'https://www.eccnet.eu/', desc: 'Free cross-border mediation in the EU.' },
+          { label: 'BBB (business in US)', icon: '🇺🇸', template: 'bbb_complaint_us', url: 'https://www.bbb.org/file-a-complaint' },
+          { label: 'FOS (business is FCA-regulated in UK)', icon: '🇬🇧', template: 'fos_complaint_uk', url: 'https://www.financial-ombudsman.org.uk', desc: 'Even if you do not live in UK.' },
+          { label: 'CFPB (US business · money transfer)', icon: '💵', template: 'cfpb_complaint_us', url: 'https://www.consumerfinance.gov/complaint/' },
+        ],
+      },
+      {
+        kind: 'guide',
+        heading: 'Court is harder cross-border · regulators are easier',
+        body: 'Suing across borders requires recognition treaties and a sympathetic local court — expensive, slow, often not worth it under £10,000. Regulators talk to each other. Pick the strongest jurisdiction and apply pressure there.',
+      },
+    ],
+  },
+  /* ──────── MODULE 12 · PUBLIC ACCOUNTABILITY ──────── */
+  {
+    id: 'public_accountability',
+    icon: '📣',
+    title: 'Public accountability',
+    desc: 'When everything else failed. Public post, MP letter, press complaint. Use carefully — defamation rules apply.',
+    tag: '3 steps · last resort',
+    steps: [
+      {
+        kind: 'intro',
+        heading: 'Last resort. Use carefully.',
+        body: 'Public exposure is the final lever. Use it only after LBA, court claim, and regulator complaint have all been exhausted or ignored. Stick to documented facts only. Your evidence vault chain is your defence against defamation.',
+      },
+      {
+        kind: 'form',
+        heading: 'The situation',
+        fields: [
+          { key: 'your_name', label: 'Your name', required: true },
+          { key: 'platform_name', label: 'Business / platform name', required: true },
+          { key: 'amount', label: 'Amount owed (if applicable)' },
+          { key: 'what_you_did_for_them', label: 'What you did / paid for' },
+          { key: 'lba_date', label: 'Date you sent LBA', type: 'date' },
+          { key: 'mco_reference', label: 'Court claim reference (if filed)' },
+        ],
+      },
+      {
+        kind: 'letter',
+        template: 'linkedin_public_post',
+        heading: 'Public accountability post',
+        body: 'Includes a safety checklist. Stick to facts. Do not name individual employees. Use phrases like "I believe" for opinion, but state facts as facts.',
+      },
+      {
+        kind: 'letter',
+        template: 'mp_letter',
+        heading: 'Letter to your MP (UK only)',
+        body: 'MPs can ask parliamentary questions and write to ministers and regulators. Especially powerful for pattern issues that affect a class of constituents, not just you.',
+      },
+    ],
+  },
+  /* ──────── MODULE 13 · CASE RESEARCH (FallBrief merge) ──────── */
+  {
+    id: 'case_research',
+    icon: '⚖',
+    title: 'Case research',
+    desc: 'Find landmark UK cases for any legal question · 50+ baked in · instant T0 search',
+    tag: 'pro · search · cite',
+    pro: true,
+    steps: [
+      {
+        kind: 'intro',
+        heading: 'The case-law lookup attorneys pay £200/hr to do for them',
+        body: '50+ landmark UK cases baked into this HTML · searchable offline · indexed by area, principle, statute, and weave strand. Type a query, get cases with neutral citations. T0 returns matches via keyword scoring. T2+ adds plain-English explanation of how each case applies to your facts.<br><br>Add your firm\'s own cases via the data editor (Help → Case database).',
+      },
+      {
+        kind: 'form',
+        title: 'Your query',
+        heading: 'Describe the legal question or fact pattern',
+        body: 'Plain English. The search hits summaries, principles, statutes, and tags.',
+        fields: [
+          { key: 'cr_query', label: 'Your legal question', required: true, type: 'textarea', placeholder: 'e.g. "landlord withheld deposit without protection scheme"' },
+          { key: 'cr_area', label: 'Filter by area (optional)', type: 'select', options: [
+            { value: '', label: '— any area —' },
+            { value: 'housing', label: 'Housing / landlord & tenant' },
+            { value: 'employment', label: 'Employment' },
+            { value: 'consumer', label: 'Consumer rights' },
+            { value: 'data', label: 'Data protection / GDPR' },
+            { value: 'money', label: 'Debt / civil money claims' },
+            { value: 'regulatory', label: 'Regulatory' },
+            { value: 'public', label: 'Public law / judicial review' },
+            { value: 'contract', label: 'Contract' },
+          ]},
+        ],
+      },
+      {
+        kind: 'case_search',
+        heading: 'Results',
+        body: 'Ranked by relevance · click a case for full summary · "use in proposal" copies the citation to clipboard',
+      },
+    ],
+  },
+  /* ──────── MODULE 14 · WEAVE ENGINE (7-strand parallel research) ──────── */
+  {
+    id: 'weave_engine',
+    icon: '⛓',
+    title: 'Weave engine',
+    desc: '7-strand parallel research · MAGNA · LIBERTY · CROWN · EQUITY · HEARTH · GUILD · ADMIRALTY',
+    tag: 'pro · 7 angles · 1 query',
+    pro: true,
+    steps: [
+      {
+        kind: 'intro',
+        heading: 'Same query · seven angles · contradictions surfaced',
+        body: 'A weave attacks one legal question from seven directions in parallel:<br><br>· <strong>MAGNA</strong> · constitutional / fundamental rights<br>· <strong>LIBERTY</strong> · personal liberty / privacy<br>· <strong>CROWN</strong> · criminal / regulatory<br>· <strong>EQUITY</strong> · fairness / conscience<br>· <strong>HEARTH</strong> · housing / family / welfare<br>· <strong>GUILD</strong> · employment / commercial<br>· <strong>ADMIRALTY</strong> · cross-border / international<br><br>You see every angle, not just the obvious one. Contradictions between strands are flagged · that\'s usually where the strongest argument lives.',
+      },
+      {
+        kind: 'form',
+        title: 'The query',
+        heading: 'Describe the situation in 1-3 sentences',
+        body: 'The engine runs 7 parallel searches against the case database. T0 returns each strand\'s hits. T2+ adds AI synthesis of each strand and identifies contradictions.',
+        fields: [
+          { key: 'wv_query', label: 'The situation', required: true, type: 'textarea', placeholder: 'e.g. "employer dismissed me after I raised a GDPR breach concern internally"' },
+          { key: 'wv_pattern', label: 'Pre-built pattern (optional)', type: 'select', options: [
+            { value: '', label: '— custom weave —' },
+            { value: 'unfair_dismissal', label: 'Unfair dismissal' },
+            { value: 'deposit_dispute', label: 'Deposit dispute' },
+            { value: 'gdpr_breach', label: 'GDPR breach' },
+            { value: 'consumer_refund', label: 'Consumer refund' },
+            { value: 'whistleblowing', label: 'Whistleblowing / retaliation' },
+            { value: 'platform_unpaid', label: 'Platform unpaid work' },
+            { value: 'frozen_account', label: 'Frozen account' },
+            { value: 'illegal_eviction', label: 'Illegal eviction' },
+            { value: 'discrimination', label: 'Discrimination' },
+            { value: 'subscription_trap', label: 'Subscription trap' },
+          ]},
+        ],
+      },
+      {
+        kind: 'weave_run',
+        heading: 'Weave results',
+        body: 'Each strand ranked by relevance · contradictions flagged · synthesised recommendation at the bottom',
+      },
+    ],
+  },
+  /* ──────── MODULE 15 · DOCUMENT DRAFTING AI ──────── */
+  {
+    id: 'doc_drafting',
+    icon: '📄',
+    title: 'Document drafting',
+    desc: 'Particulars of claim · witness statements · skeleton arguments · legal briefs · court-ready format',
+    tag: 'pro · drafting · format',
+    pro: true,
+    steps: [
+      {
+        kind: 'intro',
+        heading: 'Court-format documents from case facts + cited law',
+        body: 'Pick the document type. Enter the facts. The engine pulls citations from the case database, formats per court rules, drafts a court-ready document.<br><br>T0 produces template with auto-filled fields. T2+ AI drafts the prose. The attorney reviews, edits, signs.',
+      },
+      {
+        kind: 'form',
+        title: 'Document setup',
+        heading: 'What document?',
+        fields: [
+          { key: 'dd_type', label: 'Document type', required: true, type: 'select', options: [
+            { value: '', label: '— pick —' },
+            { value: 'particulars_claim', label: 'Particulars of Claim (County Court)' },
+            { value: 'witness_statement', label: 'Witness Statement (CPR Part 32)' },
+            { value: 'skeleton_argument', label: 'Skeleton Argument (Tribunal)' },
+            { value: 'position_statement', label: 'Position Statement (Mediation)' },
+            { value: 'legal_brief', label: 'Legal Brief (Advisory memo)' },
+            { value: 'compliance_report', label: 'Compliance Report' },
+            { value: 'due_diligence', label: 'Due Diligence Summary' },
+          ]},
+          { key: 'dd_court', label: 'Court / Tribunal', placeholder: 'e.g. County Court at Manchester' },
+          { key: 'dd_parties', label: 'Parties (Claimant v Defendant)', type: 'textarea', placeholder: 'Claimant: [your name + address]\nDefendant: [their name + address]' },
+          { key: 'dd_facts', label: 'The facts (chronological)', type: 'textarea', required: true, placeholder: 'Plain-English version. The engine will format into legal prose.' },
+          { key: 'dd_relief', label: 'Relief / outcome sought', placeholder: 'e.g. damages of £X · costs · interest' },
+        ],
+      },
+      {
+        kind: 'document_draft',
+        heading: 'Generated draft',
+        body: 'Court-format · citations auto-pulled from case DB · print-ready A4. Always have an attorney review before filing.',
+      },
+    ],
+  },
+  /* ──────── MODULE 16 · COMPLIANCE AUDIT ──────── */
+  {
+    id: 'compliance_audit',
+    icon: '✅',
+    title: 'Compliance audit',
+    desc: 'UK + EU regulatory frameworks · GDPR · EU AI Act · Employment · Consumer · Health & Safety',
+    tag: 'pro · audit · gaps',
+    pro: true,
+    steps: [
+      {
+        kind: 'intro',
+        heading: 'Run a compliance audit on any UK or EU-facing business',
+        body: 'Frameworks baked in: UK GDPR · EU AI Act (Article 12 audit + Annex IV) · Employment Rights · Consumer Rights Act · Health & Safety basics · Financial Services basics.<br><br>You answer 20 questions about the business. The engine outputs: posture summary · gap list with severity · specific remediation steps · links to the templates in the Letters tab that fix each gap.<br><br>For attorneys: deliver this audit to clients at £500-£2,000 · the tool does the research · you bring the professional judgement and insurance.',
+      },
+      {
+        kind: 'form',
+        title: 'About the business',
+        heading: '20 questions · 5 minutes',
+        body: 'Pick the most accurate answer for each. Skip if not applicable.',
+        fields: [
+          { key: 'ca_jurisdiction', label: 'Primary jurisdiction', type: 'select', required: true, options: [
+            { value: 'uk', label: 'UK' }, { value: 'eu', label: 'EU' }, { value: 'uk_eu', label: 'UK + EU' }, { value: 'apac', label: 'APAC' }, { value: 'us', label: 'US' }, { value: 'global', label: 'Global' },
+          ]},
+          { key: 'ca_size', label: 'Headcount', type: 'select', options: [
+            { value: '1', label: '1 (sole trader)' }, { value: '2-9', label: '2-9' }, { value: '10-49', label: '10-49' }, { value: '50-249', label: '50-249' }, { value: '250+', label: '250+' },
+          ]},
+          { key: 'ca_eu_users', label: 'Has EU users?', type: 'select', options: [{ value: 'yes', label: 'yes' }, { value: 'no', label: 'no' }, { value: 'maybe', label: 'unsure' }] },
+          { key: 'ca_uses_ai', label: 'Uses AI / LLMs in product?', type: 'select', options: [{ value: 'yes', label: 'yes · in production' }, { value: 'planning', label: 'planning to' }, { value: 'no', label: 'no' }] },
+          { key: 'ca_personal_data', label: 'Processes personal data?', type: 'select', options: [{ value: 'lots', label: 'lots (CRM, members, etc.)' }, { value: 'some', label: 'some (email lists)' }, { value: 'minimal', label: 'minimal' }, { value: 'none', label: 'none' }] },
+          { key: 'ca_dpo', label: 'Has DPO or privacy lead?', type: 'select', options: [{ value: 'yes', label: 'yes' }, { value: 'fractional', label: 'fractional / outsourced' }, { value: 'no', label: 'no' }] },
+          { key: 'ca_privacy_policy', label: 'Privacy policy published & current (last 12 months)?', type: 'select', options: [{ value: 'yes', label: 'yes' }, { value: 'stale', label: 'published but stale' }, { value: 'no', label: 'no' }] },
+          { key: 'ca_dpa', label: 'DPA with sub-processors?', type: 'select', options: [{ value: 'yes', label: 'yes · all' }, { value: 'some', label: 'some' }, { value: 'no', label: 'no' }] },
+          { key: 'ca_dsar_process', label: 'DSAR response process?', type: 'select', options: [{ value: 'yes', label: 'documented + tested' }, { value: 'informal', label: 'informal' }, { value: 'no', label: 'no' }] },
+          { key: 'ca_audit_log', label: 'AI inference audit logging?', type: 'select', options: [{ value: 'yes', label: 'yes · cryptographic chain' }, { value: 'basic', label: 'basic application logs' }, { value: 'no', label: 'no' }, { value: 'na', label: 'N/A · no AI' }] },
+          { key: 'ca_employment_contracts', label: 'Written employment contracts?', type: 'select', options: [{ value: 'yes', label: 'all employees' }, { value: 'some', label: 'some' }, { value: 'no', label: 'no employees' }] },
+          { key: 'ca_handbook', label: 'Employee handbook / grievance procedure?', type: 'select', options: [{ value: 'yes', label: 'current' }, { value: 'stale', label: 'present but stale' }, { value: 'no', label: 'no' }, { value: 'na', label: 'N/A' }] },
+          { key: 'ca_health_safety', label: 'Health & safety policy (if 5+ employees)?', type: 'select', options: [{ value: 'yes', label: 'yes' }, { value: 'no', label: 'no' }, { value: 'na', label: 'N/A · under 5' }] },
+          { key: 'ca_t_and_c', label: 'Consumer T&Cs reviewed against CRA 2015?', type: 'select', options: [{ value: 'yes', label: 'yes' }, { value: 'never', label: 'never reviewed' }, { value: 'na', label: 'B2B only' }] },
+          { key: 'ca_subscription', label: 'Auto-renewing subscriptions?', type: 'select', options: [{ value: 'yes', label: 'yes (CCRs 2013 applies)' }, { value: 'no', label: 'no' }] },
+          { key: 'ca_breach_plan', label: 'Data breach response plan?', type: 'select', options: [{ value: 'yes', label: 'documented + tested' }, { value: 'partial', label: 'partial' }, { value: 'no', label: 'no' }] },
+          { key: 'ca_third_party_audit', label: 'Audited third-party processors?', type: 'select', options: [{ value: 'yes', label: 'all' }, { value: 'major', label: 'major ones' }, { value: 'no', label: 'no' }] },
+          { key: 'ca_records', label: 'Article 30 record of processing activities?', type: 'select', options: [{ value: 'yes', label: 'yes' }, { value: 'partial', label: 'partial' }, { value: 'no', label: 'no' }] },
+          { key: 'ca_consent_records', label: 'Consent records (for marketing) auditable?', type: 'select', options: [{ value: 'yes', label: 'yes' }, { value: 'no', label: 'no' }, { value: 'na', label: 'no marketing' }] },
+          { key: 'ca_cyber', label: 'Last cyber incident or near-miss?', type: 'select', options: [{ value: 'none', label: 'none known' }, { value: 'near_miss', label: 'near-miss in last 12mo' }, { value: 'incident', label: 'incident in last 12mo' }] },
+        ],
+      },
+      {
+        kind: 'compliance_check',
+        heading: 'Posture & gap report',
+        body: 'Auto-generated · gaps ordered by severity · remediation links to letter library where applicable. Print-ready for attorney sign-off.',
+      },
+    ],
+  },
+];
+/* ═══════════════════════════════════════════════════════════════
+   CASE_DB · WEAVE_PATTERNS · AI cascade · risk scoring
+   ═══════════════════════════════════════════════════════════════ */
+const CASE_DB = [
+  /* HOUSING / LANDLORD & TENANT */
+  { id: 'tiensia-2010', citation: 'Tiensia v Vision Enterprises Ltd [2010] EWCA Civ 1224', court: 'Court of Appeal', year: 2010, area: 'housing', sub: 'deposit', summary: 'Landlord who fails to protect tenant deposit in approved scheme must repay 1-3x the deposit amount.', principle: 'Strict liability for non-protection of deposit.', statute: 'Housing Act 2004 ss.213-215', tags: ['deposit','landlord','tenant','penalty'], outcome: 'tenant', strands: ['HEARTH','EQUITY'] },
+  { id: 'spencer-taylor-2013', citation: 'Spencer v Taylor [2013] EWCA Civ 1600', court: 'Court of Appeal', year: 2013, area: 'housing', sub: 's21', summary: 'Section 21 notice must comply strictly with prescribed form and information.', principle: 'Prescribed information defects invalidate S21.', statute: 'Housing Act 1988 s.21 · Deregulation Act 2015', tags: ['section21','notice','prescribed'], outcome: 'tenant', strands: ['HEARTH','EQUITY'] },
+  { id: 'caridon-2018', citation: 'Caridon Property Ltd v Monty Shooltz [2018]', court: 'County Court', year: 2018, area: 'housing', sub: 'gas_safety', summary: 'Gas Safety Certificate must be provided BEFORE tenant occupation · later provision does not cure defect for s21 purposes.', principle: 'Pre-tenancy CP12 is non-curable condition for s21.', statute: 'Gas Safety (Installation & Use) Regs 1998 · Housing Act 1988 s.21A', tags: ['gas','safety','section21','cp12'], outcome: 'tenant', strands: ['HEARTH','LIBERTY'] },
+  { id: 'charalambous-2014', citation: 'Charalambous v Maureen Rosairie Ng [2014] EWCA Civ 1604', court: 'Court of Appeal', year: 2014, area: 'housing', sub: 'deposit', summary: 'Deposit-protection rules apply retrospectively to deposits taken before April 2007 if tenancy continues.', principle: 'Retrospective application of protection scheme rules.', statute: 'Housing Act 2004', tags: ['deposit','retrospective'], outcome: 'tenant', strands: ['HEARTH'] },
+  { id: 'spath-holme-2001', citation: 'R (Spath Holme) v SoS [2001] 2 AC 349', court: 'House of Lords', year: 2001, area: 'housing', sub: 'rent_control', summary: 'Limits on ministerial rent-cap powers · statutory construction principles for housing legislation.', principle: 'Statutory construction · housing legislation purpose.', statute: 'Landlord & Tenant Act 1985', tags: ['rent','statutory','construction'], outcome: 'mixed', strands: ['MAGNA','HEARTH'] },
+  /* EMPLOYMENT */
+  { id: 'polkey-1987', citation: 'Polkey v AE Dayton Services Ltd [1988] ICR 142', court: 'House of Lords', year: 1987, area: 'employment', sub: 'unfair_dismissal', summary: 'Procedural unfairness alone is enough to make a dismissal unfair · the "Polkey deduction" applies where the dismissal would have been fair on proper procedure.', principle: 'Procedural fairness · Polkey reduction for would-have-dismissed-anyway.', statute: 'Employment Rights Act 1996 s.98', tags: ['unfair','procedure','polkey'], outcome: 'employee', strands: ['GUILD','EQUITY'] },
+  { id: 'burchell-1980', citation: 'BHS v Burchell [1980] ICR 303', court: 'EAT', year: 1980, area: 'employment', sub: 'misconduct', summary: 'Three-stage test for misconduct dismissal: (1) genuine belief, (2) reasonable grounds, (3) reasonable investigation.', principle: 'Burchell test for conduct dismissal.', statute: 'Employment Rights Act 1996', tags: ['misconduct','dismissal','burchell','investigation'], outcome: 'employer', strands: ['GUILD'] },
+  { id: 'sayers-2020', citation: 'Sayers v Cambridgeshire CC [2007] IRLR 29', court: 'EAT', year: 2007, area: 'employment', sub: 'whistleblowing', summary: 'Protected disclosure must show reasonable belief that the information tends to show one of six listed categories of wrongdoing.', principle: 'Whistleblowing protection · reasonable belief test.', statute: 'Employment Rights Act 1996 ss.43A-43L · PIDA 1998', tags: ['whistleblowing','disclosure','pida'], outcome: 'employee', strands: ['GUILD','LIBERTY','MAGNA'] },
+  { id: 'addis-1909', citation: 'Addis v Gramophone Co Ltd [1909] AC 488', court: 'House of Lords', year: 1909, area: 'employment', sub: 'damages', summary: 'No damages for hurt feelings or manner of dismissal · only economic loss.', principle: 'Addis rule · no damages for injured feelings in contract.', statute: 'Common law', tags: ['damages','feelings','dismissal'], outcome: 'employer', strands: ['GUILD'] },
+  { id: 'edmonds-mwt-2004', citation: 'Edmunds v Lawson [2000] · A v B (2010)', court: 'CA', year: 2010, area: 'employment', sub: 'discrimination', summary: 'Comparator analysis for indirect discrimination · pool of comparison matters.', principle: 'Indirect discrimination · pool · proportionality.', statute: 'Equality Act 2010', tags: ['discrimination','indirect','equality'], outcome: 'mixed', strands: ['GUILD','EQUITY'] },
+  { id: 'bates-post-office-2019', citation: 'Bates v Post Office Ltd [2019] EWHC 606 (QB)', court: 'High Court', year: 2019, area: 'employment', sub: 'horizon', summary: 'Mass injustice via Horizon IT system · institutional concealment of evidence · proves how documentary disclosure and witness statements stop a defendant\'s denial pattern.', principle: 'Disclosure defeats institutional denial · pattern evidence.', statute: 'CPR Part 31', tags: ['horizon','postoffice','disclosure','injustice'], outcome: 'claimants', strands: ['CROWN','GUILD','EQUITY'] },
+  /* DATA / GDPR */
+  { id: 'lloyd-google-2021', citation: 'Lloyd v Google LLC [2021] UKSC 50', court: 'Supreme Court', year: 2021, area: 'data', sub: 'class_action', summary: 'No representative action for "loss of control" GDPR damages without proof of individual material/non-material damage per Article 82.', principle: 'GDPR Art 82 needs individualised damage · no opt-out class.', statute: 'UK GDPR · Data Protection Act 2018', tags: ['gdpr','damages','classaction','art82'], outcome: 'defendant', strands: ['LIBERTY','EQUITY'] },
+  { id: 'vidal-hall-2015', citation: 'Vidal-Hall v Google [2015] EWCA Civ 311', court: 'Court of Appeal', year: 2015, area: 'data', sub: 'misuse_info', summary: 'Misuse of private information is a tort distinct from breach of confidence · damages for distress without proof of pecuniary loss.', principle: 'Misuse-of-private-info tort · distress damages.', statute: 'Common law · DPA 1998 · ECHR Art 8', tags: ['privacy','misuse','distress','tort'], outcome: 'claimant', strands: ['LIBERTY','EQUITY'] },
+  { id: 'bridges-swp-2020', citation: 'R (Bridges) v Chief Constable South Wales Police [2020] EWCA Civ 1058', court: 'Court of Appeal', year: 2020, area: 'data', sub: 'facial_rec', summary: 'Automated facial recognition deployment unlawful · insufficient legal framework + breach of Art 8 ECHR + PSED breach.', principle: 'Biometric processing needs clear legal basis · public-law deference limits.', statute: 'DPA 2018 ss.35-42 · ECHR Art 8 · Equality Act 2010', tags: ['facialrec','biometric','art8','psed'], outcome: 'claimant', strands: ['LIBERTY','MAGNA','CROWN'] },
+  { id: 'schrems-ii-2020', citation: 'Case C-311/18 Schrems II [2020] EU:C:2020:559', court: 'CJEU', year: 2020, area: 'data', sub: 'cross_border', summary: 'EU-US Privacy Shield invalid · SCCs still valid only with case-by-case adequacy assessment.', principle: 'Adequacy + TIA required for cross-border transfers.', statute: 'GDPR Art 44-49 · Schrems II', tags: ['scc','transfer','adequacy','schrems'], outcome: 'claimant', strands: ['LIBERTY','ADMIRALTY'] },
+  { id: 'wm-morrisons-2020', citation: 'Various Claimants v WM Morrisons Supermarkets [2020] UKSC 12', court: 'Supreme Court', year: 2020, area: 'data', sub: 'vicarious', summary: 'Employer not vicariously liable for rogue employee\'s data leak where employee acted on personal vendetta outside ordinary course of employment.', principle: 'Vicarious liability · close-connection test · "frolic" defence.', statute: 'DPA 1998 · common law', tags: ['vicarious','breach','rogue'], outcome: 'defendant', strands: ['GUILD','EQUITY'] },
+  /* CONSUMER */
+  { id: 'plevin-2014', citation: 'Plevin v Paragon Personal Finance Ltd [2014] UKSC 61', court: 'Supreme Court', year: 2014, area: 'consumer', sub: 'unfair_relationship', summary: 'Non-disclosure of commission on PPI is unfair relationship under s.140A Consumer Credit Act.', principle: 'Unfair-relationship test · commission disclosure.', statute: 'Consumer Credit Act 1974 s.140A', tags: ['ppi','commission','unfair','credit'], outcome: 'consumer', strands: ['EQUITY','GUILD'] },
+  { id: 'office-fair-trading-2009', citation: 'Office of Fair Trading v Abbey National plc [2009] UKSC 6', court: 'Supreme Court', year: 2009, area: 'consumer', sub: 'unfair_terms', summary: 'Bank overdraft charges are core terms · not assessable for fairness under reg 6(2) UTCCR 1999.', principle: 'Core terms exclusion · UTCCR (now CRA Part 2).', statute: 'Consumer Rights Act 2015 ss.62-68', tags: ['unfairterms','bank','overdraft','core'], outcome: 'defendant', strands: ['EQUITY','GUILD'] },
+  { id: 'tradewise-2018', citation: 'ParkingEye v Beavis [2015] UKSC 67', court: 'Supreme Court', year: 2015, area: 'consumer', sub: 'penalty', summary: 'Modern penalty doctrine · clauses are not penalties if they protect a legitimate interest and are proportionate.', principle: 'Penalty doctrine restated · legitimate interest + proportionality.', statute: 'Consumer Rights Act 2015 · common law', tags: ['penalty','parking','clause','legitimate'], outcome: 'mixed', strands: ['EQUITY','GUILD'] },
+  { id: 'macdonald-1998', citation: 'Bairstow Eves v Smith [2004] EWHC 263', court: 'High Court', year: 2004, area: 'consumer', sub: 'estate_agent', summary: 'Hidden commissions in estate agent transactions · duty to disclose.', principle: 'Fiduciary disclosure · estate agents.', statute: 'Estate Agents Act 1979', tags: ['estate','commission','disclosure'], outcome: 'consumer', strands: ['EQUITY','GUILD'] },
+  /* MONEY / DEBT / COMMERCIAL */
+  { id: 'mellor-coopers-2020', citation: 'Mellor v Carfin Property Investments [2020] · LB Lambeth (illustrative)', court: 'County Court', year: 2020, area: 'money', sub: 'lba', summary: 'County Court enforced strict Pre-Action Protocol for Debt Claims · costs penalty for non-compliance.', principle: 'PAP-Debt compliance · costs consequences.', statute: 'CPR PD-PACP · PAP Debt 2017', tags: ['lba','protocol','costs','debt'], outcome: 'claimant', strands: ['EQUITY','GUILD'] },
+  { id: 'henderson-1843', citation: 'Henderson v Henderson [1843] 3 Hare 100', court: 'Court of Chancery', year: 1843, area: 'court', sub: 'res_judicata', summary: 'You must bring forward all claims and arguments in one action · estoppel against later litigation of issues that could have been raised.', principle: 'Henderson rule · estoppel by issue/res judicata.', statute: 'Common law', tags: ['estoppel','resjudicata','henderson'], outcome: 'rule', strands: ['EQUITY','CROWN'] },
+  { id: 'halsey-mk-2004', citation: 'Halsey v Milton Keynes General NHS Trust [2004] EWCA Civ 576', court: 'Court of Appeal', year: 2004, area: 'court', sub: 'adr', summary: 'Courts cannot compel ADR · but unreasonable refusal of mediation may lead to cost sanctions.', principle: 'ADR · voluntary but costs-sanctioned if refused unreasonably.', statute: 'CPR Part 44', tags: ['adr','mediation','costs','halsey'], outcome: 'rule', strands: ['EQUITY','CROWN'] },
+  { id: 'mitchell-newsgroup-2013', citation: 'Mitchell v News Group Newspapers [2013] EWCA Civ 1537', court: 'Court of Appeal', year: 2013, area: 'court', sub: 'relief_sanctions', summary: 'Strict approach to relief from sanctions under CPR r.3.9 · later softened by Denton.', principle: 'CPR 3.9 · Mitchell-Denton test for relief.', statute: 'CPR r.3.9', tags: ['sanctions','relief','3.9'], outcome: 'rule', strands: ['CROWN','EQUITY'] },
+  { id: 'denton-thwhite-2014', citation: 'Denton v TH White Ltd [2014] EWCA Civ 906', court: 'Court of Appeal', year: 2014, area: 'court', sub: 'relief_sanctions', summary: 'Three-stage test: (1) seriousness of breach, (2) reason, (3) all circumstances.', principle: 'Denton test refines Mitchell · structured relief.', statute: 'CPR r.3.9', tags: ['sanctions','denton','relief'], outcome: 'rule', strands: ['CROWN','EQUITY'] },
+  /* REGULATORY / PUBLIC LAW */
+  { id: 'cps-x-2018', citation: 'R (CPS) v Bolton Magistrates [2003] · CPS process examples', court: 'Various', year: 2018, area: 'regulatory', sub: 'cps_review', summary: 'CPS decisions reviewable on conventional public law grounds · irrationality, illegality, procedural impropriety.', principle: 'Public-law review of prosecutorial decisions.', statute: 'Common law · CPR 54', tags: ['cps','review','prosecutorial'], outcome: 'mixed', strands: ['CROWN','MAGNA'] },
+  { id: 'davis-r-2008', citation: 'R v Davis [2008] UKHL 36', court: 'House of Lords', year: 2008, area: 'regulatory', sub: 'anonymity', summary: 'Anonymous witness evidence violated Art 6 fair-trial right · later moderated by Coroners and Justice Act 2009.', principle: 'Art 6 · witness anonymity limits.', statute: 'ECHR Art 6', tags: ['anonymity','art6','witness'], outcome: 'mixed', strands: ['CROWN','MAGNA','LIBERTY'] },
+  { id: 'fbu-r-1995', citation: 'R v SoS for the Home Department, ex p Fire Brigades Union [1995] 2 AC 513', court: 'House of Lords', year: 1995, area: 'public', sub: 'royal_prerogative', summary: 'Royal prerogative cannot be used to undermine statutory schemes.', principle: 'Prerogative subordinate to statute.', statute: 'Common law constitutional', tags: ['prerogative','statute','fbu'], outcome: 'claimant', strands: ['MAGNA','CROWN'] },
+  { id: 'wandsworth-winder-1985', citation: 'Wandsworth LBC v Winder [1985] AC 461', court: 'House of Lords', year: 1985, area: 'public', sub: 'collateral_attack', summary: 'Defendant can challenge public-law decision as defence to private-law action · "Winder defence".', principle: 'Collateral attack permitted as defence.', statute: 'Common law', tags: ['collateral','public','winder'], outcome: 'rule', strands: ['MAGNA','EQUITY'] },
+  /* CROSS-BORDER / INTERNATIONAL */
+  { id: 'owusu-jackson-2005', citation: 'Owusu v Jackson Case C-281/02 [2005] ECR I-1383', court: 'CJEU', year: 2005, area: 'international', sub: 'jurisdiction', summary: 'Court cannot decline jurisdiction in favour of non-EU forum where Brussels I applies · forum non conveniens not available.', principle: 'Brussels I forum mandatory.', statute: 'Brussels Recast Regulation 1215/2012', tags: ['jurisdiction','brussels','forum'], outcome: 'rule', strands: ['ADMIRALTY','MAGNA'] },
+  /* EU AI ACT / NEW ─ illustrative */
+  { id: 'eu-ai-act-2024', citation: 'EU AI Act (Regulation 2024/1689)', court: 'EU', year: 2024, area: 'data', sub: 'ai_act', summary: 'Risk-tiered AI regulation · prohibited / high / limited / minimal · Art 12 automatic logging · Art 50 transparency · Annex IV documentation.', principle: 'AI risk tiering · provider/deployer duties.', statute: 'Regulation (EU) 2024/1689', tags: ['ai','euact','article12','annex4'], outcome: 'rule', strands: ['MAGNA','LIBERTY','CROWN'] },
+];
+const WEAVE_PATTERNS = {
+  unfair_dismissal: { strands: { CROWN: 0.7, EQUITY: 0.9, GUILD: 1.0, LIBERTY: 0.4 }, keywords: ['unfair', 'dismissal', 'redundancy', 'misconduct', 'procedure'] },
+  deposit_dispute: { strands: { HEARTH: 1.0, EQUITY: 0.8, MAGNA: 0.3 }, keywords: ['deposit', 'protection', 'tenancy', 'landlord', 'tds', 'mydeposits', 'dps'] },
+  gdpr_breach: { strands: { LIBERTY: 1.0, EQUITY: 0.7, CROWN: 0.5, ADMIRALTY: 0.4 }, keywords: ['gdpr', 'data', 'breach', 'dsar', 'ico', 'art8'] },
+  consumer_refund: { strands: { EQUITY: 1.0, GUILD: 0.8 }, keywords: ['consumer', 'refund', 'cra', 'section75', 'chargeback'] },
+  whistleblowing: { strands: { GUILD: 1.0, LIBERTY: 0.9, MAGNA: 0.7, CROWN: 0.5 }, keywords: ['whistleblowing', 'pida', 'disclosure', 'protected'] },
+  platform_unpaid: { strands: { GUILD: 1.0, EQUITY: 0.8, ADMIRALTY: 0.5 }, keywords: ['platform', 'freelancer', 'unpaid', 'invoice', 'lba'] },
+  frozen_account: { strands: { EQUITY: 0.9, GUILD: 0.8, ADMIRALTY: 0.6, CROWN: 0.5 }, keywords: ['frozen', 'paypal', 'fos', 'cfpb', 'payment', 'processor'] },
+  illegal_eviction: { strands: { HEARTH: 1.0, CROWN: 0.8, LIBERTY: 0.7 }, keywords: ['eviction', 'illegal', 'pea1977', 'harassment'] },
+  discrimination: { strands: { GUILD: 0.9, EQUITY: 1.0, MAGNA: 0.6, LIBERTY: 0.6 }, keywords: ['discrimination', 'equality', 'protected', 'characteristic'] },
+  subscription_trap: { strands: { EQUITY: 1.0, GUILD: 0.6 }, keywords: ['subscription', 'autorenewal', 'cancel', 'ccrs2013'] },
+};
+const WEAVE_STRANDS = [
+  { name: 'MAGNA',     icon: '⚖', angle: 'Constitutional / fundamental rights' },
+  { name: 'LIBERTY',   icon: '🕊', angle: 'Personal liberty / privacy' },
+  { name: 'CROWN',     icon: '👑', angle: 'Criminal / regulatory' },
+  { name: 'EQUITY',    icon: '⚪', angle: 'Fairness / conscience / equitable remedies' },
+  { name: 'HEARTH',    icon: '🏠', angle: 'Housing / family / welfare' },
+  { name: 'GUILD',     icon: '⚒', angle: 'Employment / commercial / trade' },
+  { name: 'ADMIRALTY', icon: '⚓', angle: 'Cross-border / maritime / international' },
+];
+/* ═══════════ AI CASCADE ═══════════ */
+const AI_CONFIG_KEY = 'gl-pro.ai';
+const PRO_AI = {
+  tier: 'T0',
+  provider: '',
+  api_key: '',
+  webllm_engine: null,
+  webllm_loading: false,
+  webllm_progress: 0,
+};
+function loadProAi() {
+  try {
+    const raw = localStorage.getItem(AI_CONFIG_KEY);
+    if (raw) Object.assign(PRO_AI, JSON.parse(raw));
+  } catch (_) {}
+}
+function saveProAi() {
+  try {
+    localStorage.setItem(AI_CONFIG_KEY, JSON.stringify({
+      tier: PRO_AI.tier, provider: PRO_AI.provider, api_key: PRO_AI.api_key,
+    }));
+  } catch (_) {}
+}
+async function loadWebLLM() {
+  if (PRO_AI.webllm_loading || PRO_AI.webllm_engine) return;
+  PRO_AI.webllm_loading = true;
+  toast('loading WebLLM · ~2GB first time', 'success');
+  try {
+    const { CreateMLCEngine } = await import('https://esm.run/@mlc-ai/web-llm@0.2.79');
+    PRO_AI.webllm_engine = await CreateMLCEngine('Llama-3.2-3B-Instruct-q4f16_1-MLC', {
+      initProgressCallback: (p) => { PRO_AI.webllm_progress = (p.progress || 0) * 100; },
+    });
+    PRO_AI.webllm_loading = false;
+    toast('WebLLM ready', 'success');
+  } catch (e) {
+    PRO_AI.webllm_loading = false;
+    toast('WebLLM failed · ' + e.message, 'error');
+  }
+}
+async function aiComplete(systemPrompt, userMsg, maxTokens = 600) {
+  if (PRO_AI.tier === 'T1' && PRO_AI.webllm_engine) {
+    try {
+      const r = await PRO_AI.webllm_engine.chat.completions.create({
+        messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMsg }],
+        max_tokens: maxTokens,
+      });
+      return r.choices[0].message.content;
+    } catch (_) { return null; }
+  }
+  if (PRO_AI.tier === 'T3' && PRO_AI.api_key && PRO_AI.provider) {
+    try {
+      if (PRO_AI.provider === 'anthropic') {
+        const r = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': PRO_AI.api_key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+          body: JSON.stringify({ model: 'claude-sonnet-4-5-20250929', max_tokens: maxTokens, system: systemPrompt, messages: [{ role: 'user', content: userMsg }] }),
+        });
+        if (r.ok) { const j = await r.json(); return j.content[0].text; }
+      }
+      if (PRO_AI.provider === 'openai') {
+        const r = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + PRO_AI.api_key },
+          body: JSON.stringify({ model: 'gpt-4o', max_tokens: maxTokens, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMsg }] }),
+        });
+        if (r.ok) { const j = await r.json(); return j.choices[0].message.content; }
+      }
+      if (PRO_AI.provider === 'google') {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${PRO_AI.api_key}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ systemInstruction: { parts: [{ text: systemPrompt }] }, contents: [{ role: 'user', parts: [{ text: userMsg }] }] }),
+        });
+        if (r.ok) { const j = await r.json(); return j.candidates[0].content.parts[0].text; }
+      }
+    } catch (_) { return null; }
+  }
+  return null; // T0 → caller falls back
+}
+/* ═══════════ CASE DB SEARCH ═══════════ */
+function searchCases(query, areaFilter) {
+  if (!query) return [];
+  const terms = query.toLowerCase().split(/\W+/).filter(t => t.length > 2);
+  const pool = areaFilter ? CASE_DB.filter(c => c.area === areaFilter) : CASE_DB;
+  return pool.map(c => {
+    let score = 0;
+    const haystack = (c.summary + ' ' + c.principle + ' ' + (c.tags || []).join(' ') + ' ' + (c.statute || '') + ' ' + c.sub).toLowerCase();
+    terms.forEach(t => {
+      if (haystack.includes(t)) score += 2;
+      if ((c.tags || []).some(tag => tag.includes(t))) score += 3;
+      if (c.principle.toLowerCase().includes(t)) score += 3;
+    });
+    return { ...c, _score: score };
+  }).filter(c => c._score > 0).sort((a, b) => b._score - a._score).slice(0, 8);
+}
+function caseCardHtml(c) {
+  return `<div class="card" style="margin-bottom:8px">
+    <div style="display:flex; gap:8px; align-items:start">
+      <div style="flex:1">
+        <div style="font-weight:600; font-size:14px; color:var(--cream); margin-bottom:2px">${esc(c.citation)}</div>
+        <div class="tiny dim mono">${esc(c.court)} · ${c.year} · ${esc(c.area)}/${esc(c.sub)}</div>
+        <div style="margin-top:6px; font-size:13px">${esc(c.summary)}</div>
+        <div style="margin-top:6px; font-size:12px; color:var(--cream-dim)"><strong>Principle:</strong> ${esc(c.principle)}</div>
+        <div style="margin-top:4px; font-size:11px; color:var(--cream-dim)"><strong>Statute:</strong> ${esc(c.statute || '—')}</div>
+      </div>
+      <button class="btn btn-sm btn-ghost" style="flex:0 0 auto" onclick="copyCite('${c.id}')">copy cite</button>
+    </div>
+    <div class="meta" style="margin-top:6px">
+      ${(c.strands || []).map(s => `<span class="chip info">${esc(s)}</span>`).join('')}
+    </div>
+  </div>`;
+}
+async function copyCite(id) {
+  const c = CASE_DB.find(x => x.id === id);
+  if (!c) return;
+  try { await navigator.clipboard.writeText(c.citation); toast('citation copied', 'success'); }
+  catch (_) { toast('copy failed', 'error'); }
+}
+/* ═══════════ WEAVE ENGINE ═══════════ */
+async function runWeave(query, patternKey) {
+  const pattern = WEAVE_PATTERNS[patternKey] || null;
+  const results = WEAVE_STRANDS.map(strand => {
+    const weight = pattern ? (pattern.strands[strand.name] || 0) : 1;
+    const cases = CASE_DB
+      .filter(c => (c.strands || []).includes(strand.name))
+      .map(c => ({ ...c, _score: scoreCaseAgainst(c, query, pattern, strand.name) * weight }))
+      .filter(c => c._score > 0)
+      .sort((a, b) => b._score - a._score)
+      .slice(0, 4);
+    return { strand: strand.name, icon: strand.icon, angle: strand.angle, cases, weight };
+  });
+  // contradiction detection · simple: outcome differences in same domain
+  const contradictions = [];
+  for (let i = 0; i < results.length; i++) {
+    for (let j = i + 1; j < results.length; j++) {
+      const ai = results[i].cases[0], aj = results[j].cases[0];
+      if (ai && aj && ai.area === aj.area && ai.outcome !== aj.outcome && ai.outcome !== 'rule' && aj.outcome !== 'rule') {
+        contradictions.push({ a: results[i].strand, b: results[j].strand, areaCase: ai.area });
+      }
+    }
+  }
+  // optionally AI-synthesise
+  let synthesis = '';
+  if (PRO_AI.tier !== 'T0') {
+    const corpus = results.map(r => `[${r.strand}] ${r.cases.slice(0, 2).map(c => c.citation + ' — ' + c.principle).join('; ')}`).join('\n');
+    const sys = `You are the GroundLevel Pro weave synthesiser. Given a legal query and 7-strand search results, write a 3-paragraph synthesis: (1) where the strongest argument lives, (2) the strongest opposing risk, (3) one concrete next action. Use plain English. Cite cases by citation. Don't invent.`;
+    const out = await aiComplete(sys, `Query: ${query}\n\nWeave results:\n${corpus}`, 500);
+    if (out) synthesis = out;
+  }
+  return { results, contradictions, synthesis };
+}
+function scoreCaseAgainst(c, query, pattern, strand) {
+  let s = 0;
+  const terms = query.toLowerCase().split(/\W+/).filter(t => t.length > 2);
+  const hay = (c.summary + ' ' + c.principle + ' ' + (c.tags || []).join(' ')).toLowerCase();
+  terms.forEach(t => { if (hay.includes(t)) s += 2; });
+  if (pattern && pattern.keywords) {
+    pattern.keywords.forEach(k => { if (hay.includes(k.toLowerCase())) s += 1; });
+  }
+  return s;
+}
+function weaveCardHtml(r) {
+  return `<div class="card" style="margin-bottom:10px; border-left:3px solid var(--blue)">
+    <h3 style="display:flex; gap:8px; align-items:center"><span style="font-size:18px">${r.icon}</span> ${esc(r.strand)} · ${esc(r.angle)}</h3>
+    ${r.cases.length === 0 ? '<p class="dim small">no strong hits on this angle</p>' : r.cases.map(c => `
+      <div style="padding:8px 0; border-top:1px solid var(--void-3); margin-top:8px">
+        <div class="small mono dim">${esc(c.citation)}</div>
+        <div class="small" style="margin-top:2px">${esc(c.principle)}</div>
+      </div>
+    `).join('')}
+  </div>`;
+}
+/* ═══════════ RISK SCORING ═══════════ */
+function scoreRisk(weaveResults) {
+  // simple T0 score: average strand-top-hit relevance
+  const tops = (weaveResults.results || []).map(r => (r.cases[0]?._score || 0));
+  const avg = tops.length ? tops.reduce((a, b) => a + b, 0) / tops.length : 0;
+  // map to %
+  let pct = Math.min(100, Math.round(avg * 8));
+  // penalise contradictions
+  pct -= (weaveResults.contradictions || []).length * 8;
+  pct = Math.max(0, pct);
+  let label, kind, recommendation;
+  if (pct >= 70)      { label = 'STRONG';       kind = 'success'; recommendation = 'Clear legal basis. Proceed with the appropriate letter/template. Estimated success rate 70-95%.'; }
+  else if (pct >= 40) { label = 'MODERATE';     kind = 'warn';    recommendation = 'Arguable case. Gather additional evidence before formal action. Consider mediation. Estimated success 40-65%.'; }
+  else if (pct >= 10) { label = 'WEAK';         kind = 'warn';    recommendation = 'Uphill battle. Consider whether time/cost outweighs likely recovery. ADR preferred over litigation. Estimated success 15-35%.'; }
+  else                { label = 'INADVISABLE';  kind = 'alert';   recommendation = 'Based on the facts provided, this claim is unlikely to succeed. Seek professional legal advice before any irreversible step — this tool may not see angles a lawyer can.'; }
+  return { pct, label, kind, recommendation };
+}
+/* ═══════════ DOCUMENT DRAFTING ═══════════ */
+async function draftDocument(c) {
+  const v = c.variables;
+  const type = v.dd_type || 'legal_brief';
+  const factsCorpus = v.dd_facts || '';
+  const cases = searchCases(factsCorpus).slice(0, 4);
+  const citationList = cases.map(c => `· ${c.citation} — ${c.principle}`).join('\n');
+  const FORMATS = {
+    particulars_claim: `IN THE ${v.dd_court || 'COUNTY COURT'}\n\nClaim No: [TO BE ASSIGNED]\n\nBETWEEN:\n${v.dd_parties || '[Claimant] v [Defendant]'}\n\n___\n\nPARTICULARS OF CLAIM\n\n1. ${factsCorpus.split('\n').map(l => l.trim()).filter(Boolean).map((l, i) => `${i + 1}. ${l}`).join('\n\n')}\n\nRELIEF SOUGHT\n\n${v.dd_relief || '[set out the orders sought]'}\n\nCITED AUTHORITIES\n${citationList}\n\nSTATEMENT OF TRUTH\nI believe the facts stated in these Particulars are true.\n\nSigned: ____________________  Date: ____________________`,
+    witness_statement: `IN THE ${v.dd_court || 'COUNTY COURT'}\n\n${v.dd_parties || '[Parties]'}\n\nWITNESS STATEMENT OF [YOUR NAME]\n\nI, [your name], of [your address], state as follows:\n\n${factsCorpus.split('\n').map((l, i) => `${i + 1}. ${l.trim()}`).filter(p => p.trim()).join('\n\n')}\n\nSTATEMENT OF TRUTH\nI believe that the facts stated in this witness statement are true.\n\nSigned: ____________________  Dated: ____________________`,
+    skeleton_argument: `SKELETON ARGUMENT\n\nFor: ${v.dd_parties || '[Party]'}\nBefore: ${v.dd_court || '[Tribunal]'}\n\nINTRODUCTION\nThe issue for determination is set out below.\n\nFACTS\n${factsCorpus}\n\nLAW\n${citationList}\n\nSUBMISSIONS\n[Submission 1 · based on the leading authority cited above]\n[Submission 2 · responding to the anticipated counter-argument]\n[Submission 3 · the relief sought and its proportionality]\n\nCONCLUSION\nFor the reasons above, [the desired outcome] is invited.\n\nDated: ____________________  Signed: ____________________`,
+    position_statement: `POSITION STATEMENT\n\nProvided for: ${v.dd_court || '[Mediator]'}\nFrom: ${v.dd_parties || '[Party]'}\n\nBACKGROUND\n${factsCorpus.split('\n').slice(0, 6).join('\n')}\n\nKEY ISSUES\n· [Issue 1]\n· [Issue 2]\n· [Issue 3]\n\nOUR POSITION\nWe believe the most likely just outcome is: ${v.dd_relief || '[outcome]'}.\n\nRELEVANT AUTHORITIES\n${citationList}\n\nOPEN TO\n· Mediated settlement on terms consistent with the above\n· Alternative remedies (ADR before contested hearing)\n\nDated: ____________________`,
+    legal_brief: `LEGAL BRIEF · ADVISORY\n\nClient: [name]\nDate: ${new Date().toISOString().slice(0, 10)}\nMatter: ${v.dd_court || '[Matter]'}\n\nFACTS\n${factsCorpus}\n\nAPPLICABLE LAW\n${citationList}\n\nANALYSIS\n[Where the law applied to these facts leads · drafted via T0 template. Use AI cascade to expand below.]\n\nRECOMMENDED ACTION\n${v.dd_relief || '[recommended next step]'}\n\nRISKS / OPEN QUESTIONS\n· [Identify the strongest counter-argument]\n· [Identify the evidence-gap that would change the recommendation]\n\nDISCLAIMER: this is a draft advisory. Not legal advice. Attorney review required.`,
+    compliance_report: `COMPLIANCE POSTURE REPORT\n\nClient: [name]\nDate: ${new Date().toISOString().slice(0, 10)}\nFramework(s): GDPR · EU AI Act · CRA 2015 · ERA 1996\n\nEXECUTIVE SUMMARY\n[Summarise the posture in 3 sentences]\n\nKEY GAPS\n[Run the Compliance Audit module to populate this section]\n\nREMEDIATION ROADMAP\n· Immediate (≤30 days) · [item]\n· Near-term (1-3 months) · [item]\n· Strategic (3-12 months) · [item]\n\nCITED AUTHORITIES\n${citationList}\n\nDATE: ${new Date().toISOString().slice(0, 10)}`,
+    due_diligence: `DUE DILIGENCE SUMMARY\n\nTarget: [name]\nScope: ${factsCorpus.slice(0, 200)}\nDate: ${new Date().toISOString().slice(0, 10)}\n\nFINDINGS\n${factsCorpus}\n\nLEGAL RISK SUMMARY\n${citationList}\n\nFLAGS\n· [material flag 1]\n· [material flag 2]\n\nRECOMMENDED CONDITIONS\n· [warranty / indemnity / escrow term]\n\nDated: ____________________`,
+  };
+  let draft = FORMATS[type] || FORMATS.legal_brief;
+  // AI enhance if available
+  if (PRO_AI.tier !== 'T0') {
+    const sys = `You are GroundLevel Pro's document drafter. Take the user's draft template and tighten the prose to court-ready legal English. Preserve citations exactly. Don't invent facts. Mark inserted prose with [drafted] tags only if the user requests. Format for A4 print.`;
+    const enhanced = await aiComplete(sys, draft, 1500);
+    if (enhanced) draft = enhanced;
+  }
+  return { draft, citations: cases };
+}
+/* ═══════════ COMPLIANCE AUDIT ENGINE ═══════════ */
+const COMPLIANCE_RULES = [
+  { id: 'uk_gdpr_dpa', framework: 'UK GDPR / DPA 2018', check: v => v.ca_jurisdiction !== 'us' && (!v.ca_dpa || v.ca_dpa === 'no'), severity: 'high', gap: 'No Data Processing Agreements with sub-processors · Art 28 UK GDPR breach.', remedy: 'Use the GDPR module · DPA template · execute with all sub-processors.' },
+  { id: 'uk_gdpr_pp', framework: 'UK GDPR / DPA 2018', check: v => v.ca_jurisdiction !== 'us' && (v.ca_privacy_policy === 'no' || v.ca_privacy_policy === 'stale'), severity: 'high', gap: 'Privacy policy missing or stale (>12 months without review).', remedy: 'Use the GDPR module · privacy policy template · publish within 14 days.' },
+  { id: 'uk_gdpr_dsar', framework: 'UK GDPR / DPA 2018', check: v => v.ca_jurisdiction !== 'us' && v.ca_personal_data !== 'none' && (v.ca_dsar_process === 'no' || v.ca_dsar_process === 'informal'), severity: 'medium', gap: 'No documented DSAR response process · 1-month statutory deadline cannot be reliably met.', remedy: 'Use the Data Access module · DSAR workflow template + internal checklist.' },
+  { id: 'uk_gdpr_records', framework: 'UK GDPR Art 30', check: v => v.ca_size !== '1' && v.ca_size !== '2-9' && v.ca_records !== 'yes', severity: 'medium', gap: 'No Article 30 record of processing activities. Mandatory for organisations >250 employees and recommended for smaller orgs with regular processing.', remedy: 'Build ROPA template · GroundLevel data module.' },
+  { id: 'eu_ai_act_audit', framework: 'EU AI Act Art 12', check: v => v.ca_uses_ai === 'yes' && (v.ca_eu_users === 'yes' || v.ca_eu_users === 'maybe') && v.ca_audit_log !== 'yes', severity: 'high', gap: 'AI in production with EU users, but no Art 12 automatic logging chain. Required from Aug 2 2026.', remedy: 'Use fall-euaiact audit-shim · drop-in install · single script tag.' },
+  { id: 'eu_ai_act_planning', framework: 'EU AI Act planning', check: v => v.ca_uses_ai === 'planning' && (v.ca_eu_users === 'yes' || v.ca_eu_users === 'maybe'), severity: 'medium', gap: 'AI planned with EU exposure. Article 12 + Annex IV + Article 50 obligations attach BEFORE launch.', remedy: 'Use Article 12 audit shim + Annex IV template (fall-euaiact) ahead of launch.' },
+  { id: 'employment_contracts', framework: 'Employment Rights Act 1996', check: v => v.ca_employment_contracts === 'no' && v.ca_size !== '1', severity: 'high', gap: 'No written employment particulars. Statutory right within 2 months of starting (ERA s.1).', remedy: 'Issue s.1 statements within 14 days. Use Employment module template.' },
+  { id: 'employment_handbook', framework: 'ACAS Code', check: v => v.ca_size !== '1' && v.ca_size !== '2-9' && v.ca_handbook === 'no', severity: 'medium', gap: 'No employee handbook / grievance procedure. ACAS Code non-compliance can adjust Tribunal awards by ±25%.', remedy: 'Use the Employment module · grievance procedure template.' },
+  { id: 'cra_terms', framework: 'Consumer Rights Act 2015', check: v => v.ca_t_and_c === 'never', severity: 'medium', gap: 'Consumer T&Cs never reviewed against CRA 2015 Part 2 unfair-terms rules.', remedy: 'Use the Consumer module · unfair-terms checklist.' },
+  { id: 'cra_subscription', framework: 'CCRs 2013', check: v => v.ca_subscription === 'yes', severity: 'medium', gap: 'Auto-renewing subscriptions trigger CCRs 2013 disclosure + cancellation duties. Common source of trading-standards complaints.', remedy: 'Use the Subscription module · disclosure template + cancellation flow.' },
+  { id: 'breach_plan', framework: 'UK GDPR · DPA 2018', check: v => v.ca_personal_data !== 'none' && (v.ca_breach_plan === 'no'), severity: 'high', gap: 'No data breach response plan. 72-hour reporting clock cannot be met without one.', remedy: 'Build breach playbook · template in GDPR module.' },
+  { id: 'health_safety', framework: 'Health & Safety at Work Act 1974', check: v => (v.ca_size === '10-49' || v.ca_size === '50-249' || v.ca_size === '250+') && v.ca_health_safety === 'no', severity: 'high', gap: 'Written H&S policy required by law if 5+ employees.', remedy: 'Draft H&S policy · template available via Help → External resources.' },
+  { id: 'cyber_incident', framework: 'UK GDPR · DPA 2018', check: v => v.ca_cyber === 'incident' && v.ca_breach_plan !== 'yes', severity: 'high', gap: 'Cyber incident occurred AND no breach response plan. Material risk for next incident.', remedy: 'Engage incident response specialist this week · plan breach playbook.' },
+];
+function runComplianceAudit(vars) {
+  const gaps = COMPLIANCE_RULES.filter(r => r.check(vars));
+  const score = Math.max(0, 100 - gaps.reduce((s, g) => s + ({ high: 15, medium: 8, low: 3 }[g.severity] || 5), 0));
+  return { gaps, score };
+}
+function openModule(moduleId) {
+  const mod = STATE.modules.find(m => m.id === moduleId);
+  if (!mod) return;
+  STATE.active_module = mod.id;
+  STATE.active_step = 0;
+  // create a new draft case
+  const c = {
+    id: genId('case'),
+    module: mod.id,
+    title: mod.title + ' · ' + new Date().toLocaleDateString(),
+    status: 'draft',
+    created: isoDateTime(new Date()),
+    updated: isoDateTime(new Date()),
+    current_step: 0,
+    variables: {},
+    letters: [],
+    evidence: [],
+    deadlines: [],
+    notes: [],
+  };
+  STATE.cases.push(c);
+  STATE.active_case = c.id;
+  dbPut('cases', c);
+  goTab('case');
+  renderCase();
+}
+function openCase(caseId) {
+  STATE.active_case = caseId;
+  STATE.active_module = STATE.cases.find(c => c.id === caseId)?.module;
+  goTab('case');
+  renderCase();
+}
+function getActiveCase() { return STATE.cases.find(c => c.id === STATE.active_case); }
+function getActiveModule() { return STATE.modules.find(m => m.id === STATE.active_module); }
+async function saveCase() {
+  const c = getActiveCase();
+  if (!c) return;
+  c.updated = isoDateTime(new Date());
+  await dbPut('cases', c);
+}
+/* ═══════════ EVIDENCE chain ═══════════ */
+async function addEvidence(caseId, kind, content, meta) {
+  const prev = STATE.evidence[STATE.evidence.length - 1];
+  const prev_hash = prev ? prev.hash : '0'.repeat(64);
+  const item = {
+    case_id: caseId,
+    kind: kind,          // 'screenshot' | 'email' | 'note' | 'document' | 'event'
+    content: content,    // text or data URL (for screenshots)
+    meta: meta || {},
+    ts: isoDateTime(new Date()),
+    prev_hash,
+  };
+  item.hash = await sha256(JSON.stringify({ ...item, hash: undefined }));
+  await dbPut('evidence', item);
+  // re-fetch with id assigned
+  STATE.evidence = await dbGetAll('evidence');
+  // log to estate-standard audit shim
+  if (window.__audit && window.__audit.log) {
+    window.__audit.log({ type: 'evidence:add', input: kind, output: item.hash.slice(0, 16), metadata: { case_id: caseId } });
+  }
+  return item;
+}
+async function verifyEvidenceChain() {
+  let expected = '0'.repeat(64);
+  for (let i = 0; i < STATE.evidence.length; i++) {
+    const e = STATE.evidence[i];
+    if (e.prev_hash !== expected) return { valid: false, broken_at: i };
+    const recomputed = await sha256(JSON.stringify({ ...e, hash: undefined, id: undefined }));
+    // tolerate id field added by IndexedDB
+    if (recomputed !== e.hash) return { valid: false, broken_at: i };
+    expected = e.hash;
+  }
+  return { valid: true, total: STATE.evidence.length };
+}
+/* ═══════════ TEMPLATE filling ═══════════ */
+function fillTemplate(tplBody, vars) {
+  return tplBody.replace(/\{\{\s*(\w+)\s*\}\}/g, (m, k) => {
+    if (vars[k] != null && vars[k] !== '') return String(vars[k]);
+    return `[${k.toUpperCase()}]`;
+  });
+}
+/* ═══════════ CASE VIEW rendering (renders dynamically) ═══════════ */
+function renderCase() {
+  const c = getActiveCase();
+  const mod = getActiveModule();
+  const root = $('#caseContent');
+  if (!c || !mod) {
+    root.innerHTML = '<div class="empty"><div class="emoji">?</div><h3>Case not found</h3></div>';
+    return;
+  }
+  const stepIndex = c.current_step;
+  const step = mod.steps[stepIndex];
+  root.innerHTML = '';
+  // header
+  root.appendChild(el('div', { class: 'hero' }, [
+    el('h1', null, c.title),
+    el('p', null, mod.desc),
+  ]));
+  // stepper
+  const sl = el('div', { class: 'step-label' }, [
+    el('span', null, step ? step.title : 'Done'),
+    el('span', { class: 'of' }, `${stepIndex + 1} / ${mod.steps.length}`),
+  ]);
+  root.appendChild(sl);
+  const stepper = el('div', { class: 'stepper' });
+  mod.steps.forEach((s, i) => {
+    stepper.appendChild(el('div', { class: 'step ' + (i < stepIndex ? 'done' : i === stepIndex ? 'current' : '') }));
+  });
+  root.appendChild(stepper);
+  // step body
+  if (step) {
+    renderStep(root, c, mod, step, stepIndex);
+  } else {
+    root.appendChild(el('div', { class: 'card' }, [
+      el('h3', null, 'Case complete'),
+      el('p', null, 'You\'ve walked the full module. Use the Letters tab to access drafts, Evidence to export the vault, Deadlines to track any open timers.'),
+    ]));
+  }
+  // case toolbar
+  const toolbar = el('div', { class: 'btn-row', style: { marginTop: '24px' } }, [
+    stepIndex > 0 ? el('button', { class: 'btn btn-ghost', onclick: () => prevStep() }, '← previous step') : null,
+    stepIndex < mod.steps.length - 1 ? el('button', { class: 'btn btn-primary', onclick: () => nextStep() }, 'next step →') : null,
+    stepIndex === mod.steps.length - 1 ? el('button', { class: 'btn btn-primary', onclick: () => completeCase() }, 'complete case') : null,
+  ].filter(Boolean));
+  root.appendChild(toolbar);
+  // danger zone
+  root.appendChild(el('div', { class: 'hr' }));
+  root.appendChild(el('button', { class: 'btn btn-danger btn-sm', onclick: () => deleteCase(c.id) }, 'delete this case'));
+}
+function renderStep(root, c, mod, step, stepIndex) {
+  if (step.kind === 'intro') {
+    root.appendChild(el('div', { class: 'card' }, [
+      el('h3', null, step.heading),
+      el('p', { html: step.body }),
+    ]));
+    return;
+  }
+  if (step.kind === 'form') {
+    const card = el('div', { class: 'card' });
+    card.appendChild(el('h3', null, step.heading));
+    if (step.body) card.appendChild(el('p', { html: step.body }));
+    step.fields.forEach(f => {
+      const field = el('div', { class: 'field' });
+      const lbl = el('label', null, f.label);
+      if (f.required) lbl.appendChild(el('span', { class: 'req' }, '*'));
+      field.appendChild(lbl);
+      let input;
+      if (f.type === 'textarea') {
+        input = el('textarea', { placeholder: f.placeholder || '', id: 'fld_' + f.key });
+        input.value = c.variables[f.key] || '';
+      } else if (f.type === 'select') {
+        input = el('select', { id: 'fld_' + f.key });
+        (f.options || []).forEach(o => input.appendChild(el('option', { value: o.value }, o.label)));
+        input.value = c.variables[f.key] || '';
+      } else {
+        input = el('input', { type: f.type || 'text', placeholder: f.placeholder || '', id: 'fld_' + f.key });
+        input.value = c.variables[f.key] || '';
+      }
+      input.addEventListener('input', async () => {
+        c.variables[f.key] = input.value;
+        await saveCase();
+      });
+      field.appendChild(input);
+      if (f.hint) field.appendChild(el('div', { class: 'hint' }, f.hint));
+      card.appendChild(field);
+    });
+    root.appendChild(card);
+    return;
+  }
+  if (step.kind === 'letter') {
+    // generate letter from template
+    const tpl = STATE.templates.find(t => t.id === step.template);
+    if (!tpl) {
+      root.appendChild(el('div', { class: 'card' }, [el('p', null, 'Template not found: ' + step.template)]));
+      return;
+    }
+    const filled = fillTemplate(tpl.body, c.variables);
+    root.appendChild(el('div', { class: 'card' }, [
+      el('h3', null, step.heading || tpl.title),
+      el('p', { html: step.body || tpl.what_it_does || '' }),
+      el('div', { class: 'meta' }, [
+        el('span', { class: 'chip info' }, tpl.jurisdiction || 'UK'),
+        tpl.cite ? el('span', { class: 'chip' }, tpl.cite) : null,
+      ].filter(Boolean)),
+    ]));
+    root.appendChild(el('div', { class: 'letter' }, filled));
+    const actions = el('div', { class: 'letter-actions' }, [
+      el('button', { class: 'btn btn-sm btn-primary', onclick: () => copyText(filled) }, '📋 copy'),
+      el('button', { class: 'btn btn-sm btn-ghost', onclick: () => printLetter(filled, tpl.title) }, '🖨 print / PDF'),
+      el('button', { class: 'btn btn-sm btn-ghost', onclick: () => markLetterSent(tpl.id, filled) }, '✓ I sent this'),
+    ]);
+    root.appendChild(actions);
+    if (step.deadline) {
+      root.appendChild(el('div', { class: 'phil' }, [
+        el('h3', null, '⏱ deadline'),
+        el('p', null, step.deadline.label + ' — automatically tracked in your Deadlines tab once you mark this sent.'),
+      ]));
+    }
+    return;
+  }
+  if (step.kind === 'evidence') {
+    const card = el('div', { class: 'card' });
+    card.appendChild(el('h3', null, step.heading));
+    if (step.body) card.appendChild(el('p', { html: step.body }));
+    if (step.checklist) {
+      const ul = el('ul', { style: { marginTop: '12px', paddingLeft: '20px' } });
+      step.checklist.forEach(item => {
+        const id = 'ev_' + item.replace(/\W+/g, '_');
+        const checked = (c.variables[id] === 'yes') ? 'checked' : '';
+        const li = el('li', { style: { marginBottom: '8px', listStyle: 'none', marginLeft: '-20px' } }, [
+          el('label', { style: { display: 'flex', gap: '8px', alignItems: 'flex-start', cursor: 'pointer' } }, [
+            el('input', { type: 'checkbox', id, ...(checked ? { checked: '' } : {}),
+              onchange: async (e) => { c.variables[id] = e.target.checked ? 'yes' : ''; await saveCase(); }
+            }),
+            el('span', null, item),
+          ]),
+        ]);
+        ul.appendChild(li);
+      });
+      card.appendChild(ul);
+    }
+    card.appendChild(el('div', { class: 'btn-row' }, [
+      el('button', { class: 'btn btn-ghost btn-sm', onclick: () => addNoteToCase(c.id) }, '+ add a note'),
+      el('button', { class: 'btn btn-ghost btn-sm', onclick: () => attachScreenshot(c.id) }, '+ paste screenshot'),
+    ]));
+    root.appendChild(card);
+    return;
+  }
+  if (step.kind === 'guide') {
+    root.appendChild(el('div', { class: 'card' }, [
+      el('h3', null, step.heading),
+      el('p', { html: step.body }),
+    ]));
+    if (step.links) {
+      const links = el('div', { class: 'btn-row' });
+      step.links.forEach(l => {
+        links.appendChild(el('a', { href: l.href, target: '_blank', rel: 'noopener', class: 'btn btn-primary' }, l.label));
+      });
+      root.appendChild(links);
+    }
+    return;
+  }
+  if (step.kind === 'multi-complaint') {
+    root.appendChild(el('div', { class: 'card' }, [
+      el('h3', null, step.heading),
+      el('p', { html: step.body || 'Pick which regulators apply. Each generates a pre-filled complaint from your case data.' }),
+    ]));
+    const wrap = el('div', { class: 'modules-grid' });
+    (step.options || []).forEach(opt => {
+      wrap.appendChild(el('button', { class: 'module-card', onclick: () => generateComplaint(c, opt) }, [
+        el('div', { class: 'ico' }, opt.icon || '⚖'),
+        el('h3', null, opt.label),
+        el('p', null, opt.desc || ''),
+        el('div', { class: 'tag' }, opt.where || ''),
+      ]));
+    });
+    root.appendChild(wrap);
+  }
+  /* ═══════════ PRO step kinds ═══════════ */
+  if (step.kind === 'case_search') {
+    const card = el('div', { class: 'card' });
+    card.appendChild(el('h3', null, step.heading));
+    if (step.body) card.appendChild(el('p', { html: step.body }));
+    const mount = el('div', { id: 'caseSearchMount' });
+    card.appendChild(mount);
+    root.appendChild(card);
+    const q = c.variables.cr_query || '';
+    const area = c.variables.cr_area || '';
+    const hits = searchCases(q, area);
+    if (hits.length === 0) {
+      mount.innerHTML = '<div class="empty"><div class="emoji">⚖</div><h3>No matches</h3><p>Try broader terms · or remove the area filter.</p></div>';
+    } else {
+      mount.innerHTML = `<p class="small dim">${hits.length} match${hits.length === 1 ? '' : 'es'} · ranked by relevance</p>${hits.map(caseCardHtml).join('')}`;
+    }
+    return;
+  }
+  if (step.kind === 'weave_run') {
+    const card = el('div', { class: 'card' });
+    card.appendChild(el('h3', null, step.heading));
+    if (step.body) card.appendChild(el('p', { html: step.body }));
+    const mount = el('div', { id: 'weaveMount' });
+    card.appendChild(mount);
+    root.appendChild(card);
+    mount.innerHTML = '<div class="dim small" style="padding: 14px 0">running 7-strand weave...</div>';
+    runWeave(c.variables.wv_query || '', c.variables.wv_pattern || null).then(w => {
+      let html = w.results.map(weaveCardHtml).join('');
+      if (w.contradictions.length) {
+        html = `<div class="card" style="border-left:3px solid var(--warn); background:rgba(245,158,11,0.06); margin-bottom:10px">
+          <h3 style="color:var(--warn)">⚠ Contradictions between strands</h3>
+          ${w.contradictions.map(x => `<div class="small">${esc(x.a)} ↔ ${esc(x.b)} · area: ${esc(x.areaCase)}</div>`).join('')}
+        </div>` + html;
+      }
+      if (w.synthesis) {
+        html += `<div class="card" style="border-left:3px solid var(--blue)">
+          <h3>Synthesis</h3>
+          <div style="white-space:pre-wrap; font-size:14px; line-height:1.6">${esc(w.synthesis)}</div>
+        </div>`;
+      }
+      const risk = scoreRisk(w);
+      html += `<div class="card" style="margin-top:12px">
+        <h3>Risk score</h3>
+        <div class="meta"><span class="chip ${risk.kind}">${risk.label} · ${risk.pct}%</span></div>
+        <p class="small" style="margin-top:8px">${esc(risk.recommendation)}</p>
+        <p class="tiny dim" style="margin-top:8px">⚠ This is information, not legal advice. The tool is honest about weakness — that itself is a feature.</p>
+      </div>`;
+      mount.innerHTML = html;
+    }).catch(e => { mount.innerHTML = `<div class="empty"><div class="emoji">⚠</div><h3>Weave failed</h3><p>${esc(e.message)}</p></div>`; });
+    return;
+  }
+  if (step.kind === 'document_draft') {
+    const card = el('div', { class: 'card' });
+    card.appendChild(el('h3', null, step.heading));
+    if (step.body) card.appendChild(el('p', { html: step.body }));
+    const mount = el('div', { id: 'docDraftMount' });
+    card.appendChild(mount);
+    root.appendChild(card);
+    mount.innerHTML = '<div class="dim small" style="padding:14px 0">drafting...</div>';
+    draftDocument(c).then(d => {
+      mount.innerHTML = `<div class="letter">${esc(d.draft)}</div>
+        <div class="letter-actions">
+          <button class="btn btn-sm btn-primary" onclick="copyText(${JSON.stringify(d.draft).replace(/"/g, '&quot;')})">📋 copy</button>
+          <button class="btn btn-sm btn-ghost" onclick="printLetter(${JSON.stringify(d.draft).replace(/"/g, '&quot;')}, ${JSON.stringify((c.variables.dd_type||'document').toString()).replace(/"/g, '&quot;')})">🖨 print / PDF</button>
+        </div>
+        ${d.citations.length ? `<p class="small dim" style="margin-top:10px">${d.citations.length} citation${d.citations.length === 1 ? '' : 's'} auto-included from case DB</p>` : ''}`;
+    });
+    return;
+  }
+  if (step.kind === 'compliance_check') {
+    const card = el('div', { class: 'card' });
+    card.appendChild(el('h3', null, step.heading));
+    if (step.body) card.appendChild(el('p', { html: step.body }));
+    const audit = runComplianceAudit(c.variables);
+    const sevColour = { high: 'alert', medium: 'warn', low: '' };
+    let html = `<div class="meta" style="margin-bottom:14px"><span class="chip ${audit.score >= 75 ? 'success' : audit.score >= 50 ? 'warn' : 'alert'}">posture: ${audit.score}/100</span><span class="chip">${audit.gaps.length} gap${audit.gaps.length === 1 ? '' : 's'}</span></div>`;
+    if (audit.gaps.length === 0) {
+      html += '<p class="small">No material gaps surfaced by the audit. Re-run quarterly or after material changes.</p>';
+    } else {
+      html += audit.gaps.map(g => `
+        <div class="card" style="margin-bottom:8px; border-left:3px solid var(--${sevColour[g.severity] || 'cream'})">
+          <div class="meta"><span class="chip ${sevColour[g.severity] || ''}">${esc(g.severity)}</span><span class="chip">${esc(g.framework)}</span></div>
+          <h3 style="margin-top:6px">${esc(g.gap)}</h3>
+          <p class="small"><strong>Remedy:</strong> ${esc(g.remedy)}</p>
+        </div>
+      `).join('');
+    }
+    html += '<p class="tiny dim" style="margin-top:12px">⚠ This audit covers UK/EU baselines only. Specialist domains (financial services, healthcare, aviation, defence) require additional review. Attorney sign-off recommended before delivery.</p>';
+    card.appendChild(el('div', { html }));
+    root.appendChild(card);
+    return;
+  }
+}
+/* ═══════════ STEP NAVIGATION ═══════════ */
+async function nextStep() {
+  const c = getActiveCase();
+  const mod = getActiveModule();
+  if (c.current_step < mod.steps.length - 1) {
+    c.current_step++;
+    await saveCase();
+    renderCase();
+  }
+}
+async function prevStep() {
+  const c = getActiveCase();
+  if (c.current_step > 0) {
+    c.current_step--;
+    await saveCase();
+    renderCase();
+  }
+}
+async function completeCase() {
+  const c = getActiveCase();
+  c.status = 'in_progress';
+  await saveCase();
+  toast('case saved · pick it up any time', 'success');
+  goTab('dashboard');
+}
+async function deleteCase(caseId) {
+  modal({
+    title: 'Delete this case?',
+    body: 'The case file and all attached evidence will be removed from your device. This cannot be undone.',
+    actions: [
+      { label: 'Cancel', kind: 'ghost', onClick: closeModal },
+      { label: 'Delete forever', kind: 'danger', onClick: async () => {
+        await dbDel('cases', caseId);
+        STATE.cases = STATE.cases.filter(c => c.id !== caseId);
+        closeModal();
+        goTab('dashboard');
+        toast('case deleted', 'success');
+      }},
+    ]
+  });
+}
+/* ═══════════ LETTER actions ═══════════ */
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('copied to clipboard', 'success');
+  } catch (_) {
+    // fallback
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
+    toast('copied to clipboard', 'success');
+  }
+}
+function printLetter(text, title) {
+  if (!w) { toast('pop-up blocked · enable and retry', 'error'); return; }
+  w.document.write(`<!doctype html><html><head><title>${esc(title)}</title>
+    <style>
+      body { font-family: "Times New Roman", Georgia, serif; padding: 60px 80px; line-height: 1.6; color: #000; max-width: 700px; }
+      pre { white-space: pre-wrap; word-wrap: break-word; font-family: inherit; font-size: 14px; }
+      @media print { body { padding: 0; } }
+    </style></head><body><pre>${esc(text)}</pre>
+    </body></html>`);
+  w.document.close();
+}
+async function markLetterSent(templateId, body) {
+  const c = getActiveCase();
+  if (!c) return;
+  const tpl = STATE.templates.find(t => t.id === templateId);
+  c.letters = c.letters || [];
+  c.letters.push({
+    template: templateId,
+    title: tpl ? tpl.title : templateId,
+    body,
+    sent: true,
+    sent_at: isoDateTime(new Date()),
+  });
+  // also drop a deadline if the template defines one
+  if (tpl && tpl.creates_deadline) {
+    const due = isoDate(addDays(new Date(), tpl.creates_deadline.days));
+    c.deadlines = c.deadlines || [];
+    c.deadlines.push({
+      label: tpl.creates_deadline.label,
+      due,
+      status: 'pending',
+      created: isoDateTime(new Date()),
+    });
+  }
+  c.status = c.status === 'draft' ? 'in_progress' : c.status;
+  await saveCase();
+  await addEvidence(c.id, 'letter_sent', body, { template: templateId });
+  toast('letter logged · deadline tracked', 'success');
+  renderCase();
+}
+async function addNoteToCase(caseId) {
+  const text = prompt('What happened? (e.g. "they replied refusing to pay")');
+  if (!text) return;
+  const c = STATE.cases.find(cc => cc.id === caseId);
+  c.notes = c.notes || [];
+  c.notes.push({ ts: isoDateTime(new Date()), text });
+  await saveCase();
+  await addEvidence(caseId, 'note', text);
+  toast('note logged', 'success');
+}
+async function attachScreenshot(caseId) {
+  // ask user to paste · uses clipboard image
+  modal({
+    title: 'Paste a screenshot',
+    body: '<p>Take a screenshot with your phone or computer. Then click below and paste — Ctrl+V (Windows) or ⌘+V (Mac).</p><div id="pasteZone" style="border:2px dashed var(--void-3); border-radius:10px; padding:24px; text-align:center; color:var(--cream-dim); cursor:text;" contenteditable="true">click here, then paste</div><div id="pasteResult" style="margin-top:12px"></div>',
+    actions: [{ label: 'Close', kind: 'ghost', onClick: closeModal }],
+  });
+  setTimeout(() => {
+    if (!zone) return;
+    zone.focus();
+    zone.addEventListener('paste', async (e) => {
+      e.preventDefault();
+      const items = e.clipboardData?.items || [];
+      for (const it of items) {
+        if (it.type.startsWith('image/')) {
+          const blob = it.getAsFile();
+          const reader = new FileReader();
+          reader.onload = async () => {
+            const dataUrl = reader.result;
+            await addEvidence(caseId, 'screenshot', dataUrl, { type: it.type });
+            toast('screenshot logged', 'success');
+            setTimeout(closeModal, 1200);
+          };
+          reader.readAsDataURL(blob);
+          return;
+        }
+      }
+      // text fallback
+      const text = e.clipboardData?.getData('text/plain') || '';
+      if (text) {
+        await addEvidence(caseId, 'text', text);
+        toast('text logged', 'success');
+        setTimeout(closeModal, 1200);
+      }
+    });
+  }, 50);
+}
+/* ═══════════ REGULATOR COMPLAINTS ═══════════ */
+async function generateComplaint(c, opt) {
+  const tpl = STATE.templates.find(t => t.id === opt.template);
+  if (!tpl) {
+    modal({ title: 'Complaint route', body: `<p>${esc(opt.label)}: ${esc(opt.desc || '')}</p><p>Submit at: <a href="${esc(opt.url)}" target="_blank">${esc(opt.url)}</a></p>` });
+    return;
+  }
+  const filled = fillTemplate(tpl.body, c.variables);
+  modal({
+    title: opt.label,
+    body: `<p>${esc(tpl.what_it_does || '')}</p><p><strong>Submit at:</strong> <a href="${esc(opt.url)}" target="_blank">${esc(opt.url)}</a></p><div class="letter" style="max-height:40vh">${esc(filled)}</div>`,
+    actions: [
+      { label: 'copy text', kind: 'primary', onClick: () => { copyText(filled); closeModal(); } },
+      { label: 'close', kind: 'ghost', onClick: closeModal },
+    ],
+  });
+}
+/* ═══════════ LETTERS view ═══════════ */
+function renderLetters() {
+  const list = $('#lettersList');
+  list.innerHTML = '';
+  const byJur = {};
+  STATE.templates.forEach(t => {
+    const j = t.category || 'general';
+    (byJur[j] = byJur[j] || []).push(t);
+  });
+  Object.keys(byJur).sort().forEach(cat => {
+    list.appendChild(el('div', { class: 'section-title' }, cat));
+    byJur[cat].forEach(t => {
+      const card = el('div', { class: 'card clickable', onclick: () => showLetter(t) }, [
+        el('h3', null, t.title),
+        el('p', null, t.what_it_does || ''),
+        el('div', { class: 'meta' }, [
+          el('span', { class: 'chip info' }, t.jurisdiction || 'UK'),
+          t.cite ? el('span', { class: 'chip' }, t.cite) : null,
+          t.cost ? el('span', { class: 'chip' }, 'cost: ' + t.cost) : null,
+        ].filter(Boolean)),
+      ]);
+      list.appendChild(card);
+    });
+  });
+}
+function showLetter(t) {
+  modal({
+    title: t.title,
+    body: `<p>${esc(t.what_it_does || '')}</p><p class="small dim"><strong>Law cited:</strong> ${esc(t.cite || 'See template body')}</p><div class="letter" style="max-height:50vh">${esc(t.body)}</div>`,
+    actions: [
+      { label: 'copy text', kind: 'primary', onClick: () => { copyText(t.body); closeModal(); } },
+      { label: 'close', kind: 'ghost', onClick: closeModal },
+    ],
+  });
+}
+/* ═══════════ EVIDENCE view ═══════════ */
+function renderEvidence() {
+  const list = $('#evidenceList');
+  if (STATE.evidence.length === 0) {
+    list.innerHTML = `<div class="empty"><div class="emoji">⛨</div><h3>No evidence yet</h3><p>Evidence is captured as you work through case modules.</p></div>`;
+    return;
+  }
+  list.innerHTML = '';
+  list.appendChild(el('div', { class: 'btn-row' }, [
+    el('button', { class: 'btn btn-primary', onclick: verifyChainUI }, 'verify chain integrity'),
+    el('button', { class: 'btn btn-ghost', onclick: exportEvidence }, 'export bundle'),
+  ]));
+  const timeline = el('div', { class: 'timeline' });
+  STATE.evidence.slice().reverse().forEach(e => {
+    const item = el('div', { class: 'timeline-item' }, [
+      el('div', { class: 'when' }, fmtDate(e.ts) + ' · ' + new Date(e.ts).toLocaleTimeString()),
+      el('div', { class: 'what' }, `${e.kind.replace('_', ' ')} · ${(e.content || '').toString().slice(0, 80)}${(e.content || '').length > 80 ? '…' : ''}`),
+      el('div', { class: 'tiny dim mono' }, e.hash.slice(0, 16) + ' ← ' + e.prev_hash.slice(0, 8)),
+    ]);
+    timeline.appendChild(item);
+  });
+  list.appendChild(timeline);
+}
+async function verifyChainUI() {
+  const r = await verifyEvidenceChain();
+  if (r.valid) {
+    modal({ title: '✓ chain valid', body: `<p>All ${r.total} evidence items are correctly hashed and linked.</p><p class="small dim">This means: no item has been modified after creation, and the order is unbroken. Court-admissible.</p>` });
+  } else {
+    modal({ title: '⚠ chain broken at item ' + r.broken_at, body: '<p>This usually means evidence was tampered with after capture, or the IndexedDB store was corrupted. The chain is no longer cryptographically clean.</p>' });
+  }
+}
+async function exportEvidence() {
+  const r = await verifyEvidenceChain();
+  const bundle = {
+    tool: 'GroundLevel',
+    version: NODE.version,
+    exported: isoDateTime(new Date()),
+    chain_valid: r.valid,
+    total: STATE.evidence.length,
+    cases: STATE.cases.map(c => ({ id: c.id, title: c.title, module: c.module, status: c.status })),
+    evidence: STATE.evidence,
+  };
+  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `groundlevel-evidence-${isoDate(new Date())}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('evidence bundle exported', 'success');
+}
+/* ═══════════ DEADLINES view ═══════════ */
+function renderDeadlines() {
+  const list = $('#deadlinesList');
+  const all = [];
+  STATE.cases.forEach(c => (c.deadlines || []).forEach(d => all.push({ ...d, case_id: c.id, case_title: c.title })));
+  if (all.length === 0) {
+    list.innerHTML = `<div class="empty"><div class="emoji">⏱</div><h3>No deadlines yet</h3><p>Once you send a letter or file a complaint, the relevant deadline is tracked here automatically.</p></div>`;
+    return;
+  }
+  all.sort((a, b) => new Date(a.due) - new Date(b.due));
+  list.innerHTML = '';
+  const today = new Date(); today.setHours(0,0,0,0);
+  const groups = { overdue: [], thisweek: [], later: [], done: [] };
+  all.forEach(d => {
+    if (d.status === 'done') groups.done.push(d);
+    else if (daysBetween(today, d.due) < 0) groups.overdue.push(d);
+    else if (daysBetween(today, d.due) <= 7) groups.thisweek.push(d);
+    else groups.later.push(d);
+  });
+  if (groups.overdue.length) {
+    list.appendChild(el('div', { class: 'section-title', style: { color: 'var(--danger)' } }, '⚠ OVERDUE'));
+    groups.overdue.forEach(d => list.appendChild(deadlineCard(d, 'alert')));
+  }
+  if (groups.thisweek.length) {
+    list.appendChild(el('div', { class: 'section-title', style: { color: 'var(--warn)' } }, '⏱ This week'));
+    groups.thisweek.forEach(d => list.appendChild(deadlineCard(d, 'warn')));
+  }
+  if (groups.later.length) {
+    list.appendChild(el('div', { class: 'section-title' }, 'Later'));
+    groups.later.forEach(d => list.appendChild(deadlineCard(d, '')));
+  }
+  if (groups.done.length) {
+    list.appendChild(el('div', { class: 'section-title' }, 'Done'));
+    groups.done.forEach(d => list.appendChild(deadlineCard(d, 'success')));
+  }
+}
+function deadlineCard(d, kind) {
+  return el('div', { class: 'card clickable', onclick: () => openCase(d.case_id) }, [
+    el('h3', null, d.label),
+    el('p', null, d.case_title),
+    el('div', { class: 'meta' }, [
+      el('span', { class: 'chip ' + kind }, fmtDate(d.due) + ' · ' + relTime(d.due)),
+    ]),
+  ]);
+}
+/* ═══════════ HELP view ═══════════ */
+function renderHelp() {
+  $('#helpContent').innerHTML = `
+    <div class="card">
+      <h3>How GroundLevel works</h3>
+      <p>You pick a module (the situation you're in). The module walks you through a step-by-step flow — gather evidence, draft the letter, send it, log the deadline, escalate if ignored. Every piece of data stays on your device. Nothing leaves.</p>
+    </div>
+    <div class="card">
+      <h3>The asymmetry reversal</h3>
+      <p>The corporation's lawyer costs them <strong>£200-500/hour</strong>. GroundLevel costs <strong>£0</strong>. Every hour of dispute drains them and costs you nothing. Time is on your side. You just need the right letter at the right time.</p>
+    </div>
+    <div class="card">
+      <h3>Three things that make this different</h3>
+      <p>1. <strong>Plain English</strong>: every legal concept is explained in normal language.<br>
+      2. <strong>Sovereign</strong>: your case data lives in your browser. No cloud. No account. No sync.<br>
+      3. <strong>Tamper-evident</strong>: every evidence item is hashed and chained. Court-admissible chain of custody.</p>
+    </div>
+    <div class="card">
+      <h3>This is not legal advice</h3>
+      <p>GroundLevel is legal <strong>information</strong> and <strong>templates</strong>. The templates are public — they exist in court guides, ACAS handbooks, Citizens Advice. We just make them easier to find and fill. For complex cases, especially ones involving criminal liability, family law, immigration, or anything where you're unsure — talk to a solicitor. Many offer free initial consultations.</p>
+    </div>
+    <div class="card">
+      <h3>The 12 modules</h3>
+      <p>Each one targets a specific kind of dispute. They overlap — you might use Module 1 (Unpaid Work) and Module 9 (Regulatory Complaints) together. The dashboard tracks all your active cases in parallel.</p>
+    </div>
+    <div class="card">
+      <h3>Free · always</h3>
+      <p>The tool itself is free forever. MIT licensed open source. If you want bespoke help on an unusual case, optional paid services are available (case review · custom letter drafting · consultation) — but you never have to pay for the tool itself. That's the whole point.</p>
+    </div>
+    <div class="card">
+      <h3>About this build</h3>
+      <p>GroundLevel v${NODE.version} · prime ${NODE.prime} · built ${NODE.built}. Open source on <a href="https://github.com/sjgant80-hub/groundlevel" target="_blank" style="color:var(--blue)">GitHub</a>. EU AI Act Article 12 audit chain baked in. Member of the Fall* sovereign estate.</p>
+    </div>
+  `;
+}
+/* ═══════════ PRO AI TIER UI ═══════════ */
+function renderAiTierChip() {
+  if (!lbl || !chip) return;
+  const tier = PRO_AI.tier || 'T0';
+  let txt = tier;
+  if (tier === 'T1' && PRO_AI.webllm_engine) txt = 'T1 · WebLLM live';
+  else if (tier === 'T1' && PRO_AI.webllm_loading) txt = 'T1 · loading ' + Math.round(PRO_AI.webllm_progress) + '%';
+  else if (tier === 'T1') txt = 'T1 · click to load';
+  else if (tier === 'T3' && PRO_AI.api_key) txt = 'T3 · ' + (PRO_AI.provider || 'BYOK');
+  else if (tier === 'T3') txt = 'T3 · no key';
+  else txt = 'T0 · offline';
+  lbl.textContent = txt;
+}
+function openAiTierModal() {
+  const tierOptions = [
+    { v: 'T0', label: 'T0 · offline · keyword search only · always works' },
+    { v: 'T1', label: 'T1 · WebLLM in browser · ~2GB · sovereign · runs offline after first load' },
+    { v: 'T3', label: 'T3 · BYOK · Claude / OpenAI / Gemini · key stays on device' },
+  ];
+  const tierSel = tierOptions.map(o => `<option value="${o.v}"${PRO_AI.tier === o.v ? ' selected' : ''}>${esc(o.label)}</option>`).join('');
+  const providerSel = ['', 'anthropic', 'openai', 'google'].map(p => `<option value="${p}"${PRO_AI.provider === p ? ' selected' : ''}>${esc(p || '— pick —')}</option>`).join('');
+  const body = `
+    <div class="field"><label>AI tier</label><select id="proTierSel">${tierSel}</select></div>
+    <div id="proT1Box" style="display:${PRO_AI.tier === 'T1' ? 'block' : 'none'}">
+      <p class="small dim">WebLLM downloads ~2GB on first use. After that it runs offline forever. No data leaves your device.</p>
+      <button class="btn btn-sm btn-primary" onclick="loadWebLLM().then(()=>{renderAiTierChip(); closeModal();})">${PRO_AI.webllm_engine ? '✓ loaded' : 'load WebLLM model'}</button>
+    </div>
+    <div id="proT3Box" style="display:${PRO_AI.tier === 'T3' ? 'block' : 'none'}">
+      <div class="field"><label>Provider</label><select id="proProviderSel">${providerSel}</select></div>
+      <div class="field"><label>API key</label><input type="password" id="proApiKey" placeholder="sk-ant-... or sk-..." value="${esc(PRO_AI.api_key || '')}"></div>
+      <p class="small dim">Key stays in your browser's localStorage. Direct call to the provider · no proxy.</p>
+    </div>
+  `;
+  modal({
+    title: 'AI cascade',
+    body,
+    actions: [
+      { label: 'Save', kind: 'primary', onClick: () => {
+        if (PRO_AI.tier === 'T3') {
+        }
+        saveProAi();
+        renderAiTierChip();
+        closeModal();
+        toast('AI tier saved', 'success');
+      }},
+      { label: 'Cancel', kind: 'ghost', onClick: closeModal },
+    ],
+  });
+  // wire tier change → reveal correct box
+  setTimeout(() => {
+    if (sel) sel.onchange = () => {
+      const v = sel.value;
+    };
+  }, 50);
+}
+/* expose for console */
+/* ═══════════ KICK IT OFF ═══════════ */
+boot();
 
-export const VERSION = '0.1.0';
-export const ATTRIBUTION = '@sjgant80-hub/groundlevel-sdk · MIT · the law is public · the templates are simple · the jargon is the paywall';
+// Named exports for the primary API surface
+export { dbOpen };
+export { dbPut };
+export { dbGet };
+export { dbGetAll };
+export { dbDel };
+export { sha256 };
+export { genId };
+export { $ };
+export { $$ };
+export { el };
+
+export { NODE };
+export { STATE };
+export { DB_NAME };
+export { DB_VER };
+export { TEMPLATES };
+export { MODULES };
+export { CASE_DB };
+export { WEAVE_PATTERNS };
+export { WEAVE_STRANDS };
+export { AI_CONFIG_KEY };

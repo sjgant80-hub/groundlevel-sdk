@@ -1,43 +1,24 @@
 {
-  "name": "@sjgant80-hub/groundlevel-sdk",
-  "version": "0.1.0",
-  "description": "Sovereign legal research SDK · 50+ landmark UK cases · 7-strand weave engine · risk scoring · compliance audit · document drafting · zero dependencies · works in Node and the browser",
+  "name": "@ai-native-solutions/groundlevel-sdk",
+  "version": "1.0.0",
+  "description": "groundlevel SDK · sovereign single-file library extracted from groundlevel/index.html",
   "type": "module",
-  "main": "./src/index.js",
-  "module": "./src/index.js",
-  "exports": {
-    ".": "./src/index.js",
-    "./cases": "./src/cases.js",
-    "./weaves": "./src/weaves.js",
-    "./search": "./src/search.js",
-    "./weave": "./src/weave.js",
-    "./draft": "./src/draft.js",
-    "./compliance": "./src/compliance.js"
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "files": ["src", "docs", "README.md", "LICENSE"],
+  "scripts": {
+    "test": "node --test test/",
+    "smoke": "node examples/smoke.js"
   },
-  "files": ["src", "README.md", "LICENSE"],
-  "keywords": [
-    "legal", "law", "uk-law", "case-law", "weave-engine",
-    "compliance", "gdpr", "eu-ai-act", "uk-gdpr",
-    "litigation", "sovereign", "groundlevel"
-  ],
-  "author": "Simon Gant <sjgant80@gmail.com>",
+  "keywords": ["groundlevel", "sdk", "sovereign", "ai-native-solutions"],
+  "author": "AI-Native Solutions",
   "license": "MIT",
-  "homepage": "https://github.com/sjgant80-hub/groundlevel-sdk#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sjgant80-hub/groundlevel-sdk.git"
+    "url": "https://github.com/sjgant80-hub/groundlevel-sdk.git"
   },
-  "bugs": "https://github.com/sjgant80-hub/groundlevel-sdk/issues",
+  "homepage": "https://sjgant80-hub.github.io/groundlevel-sdk/",
   "publishConfig": {
-    "access": "public",
-    "registry": "https://npm.pkg.github.com"
-  },
-  "scripts": {
-    "test": "node --test test/sdk.test.js",
-    "demo": "node examples/basic.js"
-  },
-  "engines": {
-    "node": ">=18"
-  },
-  "sideEffects": false
+    "access": "public"
+  }
 }
