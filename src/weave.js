@@ -14,8 +14,9 @@ import { scoreCaseAgainst } from './search.js';
  * @returns {Promise<{results: Strand[], contradictions: any[], synthesis: string}>}
  */
 export async function runWeave(query, patternKey, opts = {}) {
-  const perStrand = opts.perStrand ?? 4;
-  const pattern = WEAVE_PATTERNS[patternKey] || null;
+  const o = Object(opts);
+  const perStrand = o.perStrand ?? 4;
+  const pattern = Object.hasOwn(WEAVE_PATTERNS, patternKey) ? WEAVE_PATTERNS[patternKey] : null;
   const results = WEAVE_STRANDS.map(strand => {
     const weight = pattern ? (pattern.strands[strand.name] || 0) : 1;
     const cases = CASE_DB
@@ -40,11 +41,11 @@ export async function runWeave(query, patternKey, opts = {}) {
 
   // optionally AI-synthesise
   let synthesis = '';
-  if (typeof opts.aiComplete === 'function') {
+  if (typeof o.aiComplete === 'function') {
     const corpus = results.map(r => `[${r.strand}] ${r.cases.slice(0, 2).map(c => c.citation + ' — ' + c.principle).join('; ')}`).join('\n');
     const sys = `You are the GroundLevel Pro weave synthesiser. Given a legal query and 7-strand search results, write a 3-paragraph synthesis: (1) where the strongest argument lives, (2) the strongest opposing risk, (3) one concrete next action. Use plain English. Cite cases by citation. Don't invent.`;
     try {
-      const out = await opts.aiComplete(sys, `Query: ${query}\n\nWeave results:\n${corpus}`);
+      const out = await o.aiComplete(sys, `Query: ${query}\n\nWeave results:\n${corpus}`);
       if (out) synthesis = out;
     } catch (e) { /* swallow · synthesis is optional */ }
   }
@@ -58,17 +59,21 @@ export async function runWeave(query, patternKey, opts = {}) {
  * @returns {{pct:number,label:string,kind:string,recommendation:string}}
  */
 export function scoreRisk(weaveResult) {
-  const tops = (weaveResult.results || []).map(r => (r.cases[0]?._score || 0));
+  const w = Object(weaveResult);
+  const tops = (Array.isArray(w.results) ? w.results : []).map(r => {
+    const cs = Object(r).cases;
+    return Array.isArray(cs) ? (+Object(cs[0])._score || 0) : 0;
+  });
   const avg = tops.length ? tops.reduce((a, b) => a + b, 0) / tops.length : 0;
   let pct = Math.min(100, Math.round(avg * 8));
-  pct -= (weaveResult.contradictions || []).length * 8;
+  pct -= (Array.isArray(w.contradictions) ? w.contradictions : []).length * 8;
   pct = Math.max(0, pct);
 
   let label, kind, recommendation;
-  if (pct >= 70)      { label = 'STRONG';      kind = 'success'; recommendation = 'Clear legal basis. Proceed with the appropriate letter/template. Estimated success rate 70-95%.'; }
-  else if (pct >= 40) { label = 'MODERATE';    kind = 'warn';    recommendation = 'Arguable case. Gather additional evidence before formal action. Consider mediation. Estimated success 40-65%.'; }
-  else if (pct >= 10) { label = 'WEAK';        kind = 'warn';    recommendation = 'Uphill battle. Consider whether time/cost outweighs likely recovery. ADR preferred over litigation. Estimated success 15-35%.'; }
-  else                { label = 'INADVISABLE'; kind = 'alert';   recommendation = 'Based on the facts provided, this claim is unlikely to succeed. Seek professional legal advice before any irreversible step — this tool may not see angles a lawyer can.'; }
+  if (pct >= 70)      { label = 'STRONG';      kind = 'success'; recommendation = 'Strong matching authority across the strands. Check that each cited case fits your facts, then use the matching letter or template.'; }
+  else if (pct >= 40) { label = 'MODERATE';    kind = 'warn';    recommendation = 'Some matching authority. Gather more evidence before formal action, and consider mediation.'; }
+  else if (pct >= 10) { label = 'WEAK';        kind = 'warn';    recommendation = 'Little matching authority. Weigh the time and cost against what you could recover; settling outside court is usually better than litigation.'; }
+  else                { label = 'MINIMAL';     kind = 'alert';   recommendation = 'Few of the seven strands found matching authority for these facts. Get professional legal advice before any irreversible step: this tool may not see angles a lawyer can.'; }
 
-  return { pct, label, kind, recommendation };
+  return { pct, label, kind, recommendation, basis: 'How strongly the bundled cases match these facts (keyword relevance, contradictions deducted). It is not a prediction of the outcome.' };
 }

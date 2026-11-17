@@ -1,0 +1,7 @@
+[
+  {
+    "mutation": "< → <=",
+    "snippet": "for (let i = 0; i < results.length; i++) {",
+    "reason": "Equivalent: when i equals results.length the inner loop starts at j = i + 1, which is already past the end, so the extra outer pass runs no comparisons and reads nothing; no input can tell the two loops apart."
+  }
+]

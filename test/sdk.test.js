@@ -78,7 +78,7 @@ test('scoreRisk · returns label/kind/recommendation', async () => {
   const w = await runWeave('landlord deposit unprotected', 'deposit_dispute');
   const r = scoreRisk(w);
   assert.ok(typeof r.pct === 'number');
-  assert.ok(['STRONG','MODERATE','WEAK','INADVISABLE'].includes(r.label));
+  assert.ok(['STRONG','MODERATE','WEAK','MINIMAL'].includes(r.label));
   assert.ok(r.recommendation.length > 10);
 });
 

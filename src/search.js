@@ -11,8 +11,8 @@ import { CASE_DB } from './cases.js';
  * @returns {Array<Case & {_score:number}>}
  */
 export function searchCases(query, areaFilter, opts = {}) {
-  const limit = opts.limit ?? 8;
-  if (!query) return [];
+  const limit = Object(opts).limit ?? 8;
+  if (typeof query !== 'string' || !query) return [];
   const terms = query.toLowerCase().split(/\W+/).filter(t => t.length > 2);
   const pool = areaFilter ? CASE_DB.filter(c => c.area === areaFilter) : CASE_DB;
   return pool.map(c => {
@@ -33,11 +33,12 @@ export function searchCases(query, areaFilter, opts = {}) {
  */
 export function scoreCaseAgainst(c, query, pattern) {
   let s = 0;
-  const terms = query.toLowerCase().split(/\W+/).filter(t => t.length > 2);
-  const hay = (c.summary + ' ' + c.principle + ' ' + (c.tags || []).join(' ')).toLowerCase();
+  const cc = Object(c);
+  const terms = (typeof query === 'string' ? query : '').toLowerCase().split(/\W+/).filter(t => t.length > 2);
+  const hay = (cc.summary + ' ' + cc.principle + ' ' + [].concat(cc.tags || []).join(' ')).toLowerCase();
   terms.forEach(t => { if (hay.includes(t)) s += 2; });
-  if (pattern && pattern.keywords) {
-    pattern.keywords.forEach(k => { if (hay.includes(k.toLowerCase())) s += 1; });
+  if (pattern && Array.isArray(pattern.keywords)) {
+    pattern.keywords.forEach(k => { if (hay.includes(String(k).toLowerCase())) s += 1; });
   }
   return s;
 }

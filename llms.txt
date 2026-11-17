@@ -1,35 +1,25 @@
-# groundlevel SDK
+# groundlevel-sdk
 
-> Sovereign legal research SDK · 50+ landmark UK cases · 7-strand weave engine · risk scoring · compliance audit · document drafting · zero dependencies · SDK on npm · MIT-licensed · Ed25519-signed · listed on FallMarket.
+> The GroundLevel legal toolkit as a JavaScript library: 31 UK cases with search, a 7-strand research weave, a 13-rule compliance check and court-document drafts. MIT, no dependencies, no network.
 
-groundlevel SDK is a sovereign tool built by the AI-Native Solutions guild. It runs on your machine, ships with source, and never phones home.
+Live page: https://sjgant80-hub.github.io/groundlevel-sdk/
+Source: https://github.com/sjgant80-hub/groundlevel-sdk
+Install: npm install github:sjgant80-hub/groundlevel-sdk
+Product page: https://sjgant80-hub.github.io/groundlevel/
 
-## Canonical URL
+## Exports
 
-https://sjgant80-hub.github.io/groundlevel-sdk/
+- CASE_DB · caseById · casesByArea · casesByStrand: The 31 cases, and lookups by id, area or strand.
+- searchCases(query, area?, { limit }): Cases ranked by keyword relevance (default limit 8). Never throws: a non-string query returns [].
+- runWeave(query, pattern?, { perStrand, aiComplete }): The 7-strand weave: top cases per strand, conflicts, and an optional synthesis if you pass your own model call.
+- scoreRisk(weave): STRONG, MODERATE, WEAK or MINIMAL (how well the cases match), with the percentage, a recommendation and what the number measures.
+- draftDocument({ type, facts, parties, court, relief }): Particulars of claim, witness statement, skeleton argument, position statement, legal brief, compliance report or due diligence summary, with matching cases cited.
+- auditCompliance(answers) · COMPLIANCE_RULES: The gaps your answers reveal across 13 rules, a score out of 100 (high gaps cost 15, medium 8) and a summary.
+- WEAVE_PATTERNS · WEAVE_STRANDS · PATTERN_KEYS · STRAND_NAMES · DOC_TYPES · VERSION: The tables behind the functions.
 
-## Category
+## Limits
 
-SDK on npm. Part of the FallMarket sovereign agent marketplace (https://sjgant80-hub.github.io/fallmarket/).
-
-## Install
-
-```
-npm install @ai-native-solutions/groundlevel-sdk
-```
-
-## License
-
-MIT · Copyright 2026 AI-Native Solutions
-
-## Related
-
-- FallMarket registry entry: https://sjgant80-hub.github.io/fallmarket/listing.html?id=groundlevel-sdk
-- Source: https://github.com/sjgant80-hub/groundlevel-sdk
-- FallMarket catalog: https://sjgant80-hub.github.io/fallmarket/
-- Machine-readable catalog: https://sjgant80-hub.github.io/fallmarket/listings.json
-- Owner: AI-Native Solutions · https://ai-nativesolutions.com
-
-## About AI-Native Solutions
-
-AI-Native Solutions builds sovereign single-file AI tools, MCP servers, SDKs, and HTTP APIs. All work is MIT, all is Ed25519-signed, all is discoverable via FallMarket. This tool is one entry in a 766-listing catalog.
+- The 31 cases are short summaries, not the judgments. Two of them (Spencer v Taylor and Caridon) are about section 21, which was abolished for private tenancies in England on 1 May 2026; both are marked historical.
+- The match percentage measures keyword relevance against 31 cases. It is not a probability of success and the page says so.
+- The compliance rules are a fixed checklist. A clean score means none of these 13 gaps applies to your answers, not that you are compliant.
+- The drafts are templates to edit, not finished court documents.

@@ -1,24 +1,39 @@
 {
   "name": "@ai-native-solutions/groundlevel-sdk",
-  "version": "1.0.0",
-  "description": "groundlevel SDK · sovereign single-file library extracted from groundlevel/index.html",
+  "version": "1.1.0",
+  "description": "The GroundLevel legal toolkit as a JavaScript library: 31 UK cases with search, a 7-strand research weave, a 13-rule compliance check and court-document drafts. MIT, no dependencies, no network.",
   "type": "module",
   "main": "src/index.js",
-  "types": "src/index.d.ts",
-  "files": ["src", "docs", "README.md", "LICENSE"],
-  "scripts": {
-    "test": "node --test test/",
-    "smoke": "node examples/smoke.js"
+  "exports": {
+    ".": "./src/index.js"
   },
-  "keywords": ["groundlevel", "sdk", "sovereign", "ai-native-solutions"],
-  "author": "AI-Native Solutions",
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/sdk.test.js test/gate.test.js",
+    "example": "node examples/basic.js",
+    "parity": "node scripts/parity.mjs"
+  },
+  "keywords": [
+    "uk-law",
+    "case-law",
+    "legal-research",
+    "compliance",
+    "gdpr",
+    "eu-ai-act",
+    "sdk"
+  ],
+  "author": "AI Native Solutions",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/sjgant80-hub/groundlevel-sdk.git"
   },
-  "homepage": "https://sjgant80-hub.github.io/groundlevel-sdk/",
-  "publishConfig": {
-    "access": "public"
-  }
+  "homepage": "https://sjgant80-hub.github.io/groundlevel-sdk/"
 }

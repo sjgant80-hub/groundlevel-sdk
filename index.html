@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GroundLevel SDK</title>
+<meta name="description" content="The GroundLevel legal toolkit as a JavaScript library: 31 UK cases with search, a 7-strand research weave, a 13-rule compliance check and court-document drafts. MIT, no dependencies, no network.">
+<link rel="canonical" href="https://sjgant80-hub.github.io/groundlevel-sdk/">
+<style>
+:root{--bg:#f7f6f2;--panel:#ffffff;--ink:#1d1d22;--ink-2:#55555f;--line:#dcd9d0;--accent:#7a4a12;--accent-soft:#f4ead9;--ok:#1d6b3a;--warn:#8a5a00;--code:#f0eee8;color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121317;--panel:#1b1d23;--ink:#ecebe7;--ink-2:#a9a8b3;--line:#30323b;--accent:#e0a45a;--accent-soft:#2a2216;--ok:#6fd08f;--warn:#e7b85c;--code:#22242b;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#121317;--panel:#1b1d23;--ink:#ecebe7;--ink-2:#a9a8b3;--line:#30323b;--accent:#e0a45a;--accent-soft:#2a2216;--ok:#6fd08f;--warn:#e7b85c;--code:#22242b;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:920px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:clamp(26px,5vw,38px);line-height:1.15;margin:8px 0 12px}
+h2{font-size:22px;margin:44px 0 12px;padding-top:8px;border-top:1px solid var(--line)}
+h3{font-size:17px;margin:22px 0 8px}
+p,li{max-width:72ch}
+a{color:var(--accent)}
+.lede{font-size:18px;color:var(--ink)}
+.kicker{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);margin:0}
+nav.toc{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:14px;margin:16px 0 8px}
+pre,code,.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:14px}
+pre{background:var(--code);border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow-x:auto;white-space:pre}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin:12px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+table{width:100%;border-collapse:collapse;font-size:15px;display:block;overflow-x:auto}
+td,th{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{font-size:13px;color:var(--ink-2);font-weight:600}
+label{display:block;font-size:14px;color:var(--ink-2);margin:10px 0 4px}
+input,select,textarea{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 10px}
+textarea{min-height:90px}
+button{font:inherit;font-weight:600;color:#fff;background:var(--accent);border:0;border-radius:8px;padding:10px 16px;margin-top:12px;cursor:pointer}
+:root[data-theme="dark"] button{color:#1b1407}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) button{color:#1b1407}}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.out{white-space:pre-wrap;word-break:break-word;background:var(--code);border:1px solid var(--line);border-radius:10px;padding:12px;min-height:48px;font-size:14px}
+.pill{display:inline-block;font-size:13px;font-weight:600;border-radius:999px;padding:2px 10px;border:1px solid var(--line)}
+.ok{color:var(--ok)}.warn{color:var(--warn)}
+.diagram{width:100%;height:auto;max-width:760px}
+.theme{float:right;margin-top:0;background:transparent;color:var(--ink-2);border:1px solid var(--line);font-weight:500;padding:6px 10px}
+footer{margin-top:48px;font-size:14px;color:var(--ink-2)}
+</style>
+</head>
+<body>
+<main>
+<button class="theme" id="theme" type="button" aria-label="Switch light or dark">Theme</button>
+<p class="kicker">JavaScript SDK · MIT · zero dependencies</p>
+<h1>GroundLevel SDK</h1>
+<p class="lede">A JavaScript library with the engines behind GroundLevel: <strong>31 UK cases</strong> you can search, a <strong>7-strand research weave</strong> that also flags where the authorities point different ways, a <strong>13-rule compliance check</strong> (UK GDPR, the EU AI Act, employment, consumer and health and safety law) and <strong>seven court-document drafts</strong>.</p>
+<p>It is the <a href="https://sjgant80-hub.github.io/groundlevel/">GroundLevel</a> page's own code, taken out so a developer, or an AI agent, can call it directly. It gives information, not legal advice: the case notes are short summaries, and the match score measures keyword relevance, not your chance of winning.</p>
+<nav class="toc" aria-label="On this page"><a href="#start">Start here</a><a href="#try">Try it</a><a href="#how">How it works</a><a href="#api">API</a><a href="#blueprint">Blueprint</a><a href="#business">For your business</a><a href="#risks">Risks, straight</a><a href="#proof">Proof</a><a href="#paper">The explainer</a></nav>
+
+<h2 id="start">Start here</h2>
+<ol>
+<li>Install it from GitHub (it is not on the npm registry): <pre>npm install github:sjgant80-hub/groundlevel-sdk</pre></li>
+<li>Import what you need and call it:<pre>import { searchCases, runWeave, scoreRisk, auditCompliance } from '@ai-native-solutions/groundlevel-sdk';
+
+const hits = searchCases('landlord did not protect my deposit', 'housing');
+const weave = await runWeave('employer dismissed me without process', 'unfair_dismissal');
+const match = scoreRisk(weave);            // { label: 'STRONG' | 'MODERATE' | 'WEAK' | 'MINIMAL', pct, recommendation, basis }
+const audit = auditCompliance({ ca_uses_ai: 'yes', ca_eu_users: 'yes', ca_audit_log: 'no' });</pre></li>
+<li>Or use it in a browser page with no install: <pre>import * as sdk from 'https://sjgant80-hub.github.io/groundlevel-sdk/src/index.js';</pre></li>
+<li>Pin a commit for production (<code>npm install github:sjgant80-hub/groundlevel-sdk#&lt;commit&gt;</code>) so what you tested is what runs.</li>
+</ol>
+
+<h2 id="try">Try it</h2>
+<p>These panels run the SDK's own <code>src/</code> in your browser: the same files the tests and the mutation gate prove. Nothing you type leaves this page.</p>
+<div class="grid">
+<div class="card"><h3>Search the cases, run the weave</h3>
+<label for="q">Your situation, in plain words</label><textarea id="q">my landlord kept my deposit and never protected it</textarea>
+<label for="area">Area (optional)</label><select id="area"><option value="">any</option><option>housing</option><option>employment</option><option>data</option><option>consumer</option><option>money</option><option>court</option></select>
+<label for="pat">Pattern (optional)</label><select id="pat"><option value="">none</option></select>
+<button id="go" type="button">Search and weave</button>
+<p class="kicker" style="margin-top:12px">Result</p><div class="out" id="out" aria-live="polite">Press the button.</div></div>
+<div class="card"><h3>Compliance check</h3>
+<label for="c-ai">Do you use AI?</label><select id="c-ai"><option value="yes">yes</option><option value="planning">planning</option><option value="no">no</option></select>
+<label for="c-eu">EU users?</label><select id="c-eu"><option value="yes">yes</option><option value="maybe">maybe</option><option value="no">no</option></select>
+<label for="c-log">Automatic event log?</label><select id="c-log"><option value="no">no</option><option value="yes">yes</option></select>
+<label for="c-size">Staff</label><select id="c-size"><option>1</option><option>2-9</option><option selected>10-49</option><option>50-249</option><option>250+</option></select>
+<label for="c-bp">Breach response plan?</label><select id="c-bp"><option value="no">no</option><option value="yes">yes</option></select>
+<button id="audit" type="button">Check</button>
+<p class="kicker" style="margin-top:12px">Gaps</p><div class="out" id="aout" aria-live="polite">Press Check.</div></div>
+</div>
+
+<h2 id="how">How it works</h2>
+<svg viewBox="0 0 760 250" role="img" aria-labelledby="dg-t dg-d" class="diagram">
+<title id="dg-t">How the SDK and the live page stay one program</title>
+<desc id="dg-d">The product page and this SDK carry the same code. Tests and a mutation gate prove that code; a parity check fails the build if the page and the SDK ever differ. Your code, or an AI agent, imports the proven module.</desc>
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink-2)"/></marker></defs>
+<g font-family="inherit" font-size="13">
+<rect x="10" y="20" width="200" height="70" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="110" y="48" text-anchor="middle" fill="var(--ink)" font-weight="600">GroundLevel page</text>
+<text x="110" y="68" text-anchor="middle" fill="var(--ink-2)">the product people use</text>
+<rect x="280" y="20" width="200" height="70" rx="10" fill="var(--accent-soft)" stroke="var(--accent)"/>
+<text x="380" y="48" text-anchor="middle" fill="var(--ink)" font-weight="600">groundlevel-sdk</text>
+<text x="380" y="68" text-anchor="middle" fill="var(--ink-2)">the same code, as modules</text>
+<rect x="550" y="20" width="200" height="70" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="650" y="48" text-anchor="middle" fill="var(--ink)" font-weight="600">your code · an agent</text>
+<text x="650" y="68" text-anchor="middle" fill="var(--ink-2)">import, call, get the answer</text>
+<line x1="212" y1="55" x2="276" y2="55" stroke="var(--ink-2)" stroke-width="1.5" marker-end="url(#ar)" marker-start="url(#ar)"/>
+<text x="244" y="45" text-anchor="middle" fill="var(--ink-2)" font-size="11">parity</text>
+<line x1="482" y1="55" x2="546" y2="55" stroke="var(--ink-2)" stroke-width="1.5" marker-end="url(#ar)"/>
+<text x="514" y="45" text-anchor="middle" fill="var(--ink-2)" font-size="11">import</text>
+<rect x="190" y="160" width="380" height="70" rx="10" fill="var(--panel)" stroke="var(--line)" stroke-dasharray="5 4"/>
+<text x="380" y="188" text-anchor="middle" fill="var(--ink)" font-weight="600">the gate, on every push</text>
+<text x="380" y="208" text-anchor="middle" fill="var(--ink-2)">tests · mutation gate must be clean · fuzz · parity</text>
+<line x1="380" y1="158" x2="380" y2="94" stroke="var(--ink-2)" stroke-width="1.5" marker-end="url(#ar)"/>
+</g></svg>
+<ol><li>The cases, the weave patterns, the compliance rules and the drafting templates are the GroundLevel page's own. <code>scripts/parity.mjs</code> reads the published page and fails the build if a single case, rule, pattern or wording differs; the 13 rules are also compared verdict by verdict on 4,000 sets of answers.</li><li>The search scores a case by where your words appear: anywhere in its text (2), in its tags (3) or in its principle (3). Words under three letters do not count.</li><li>The weave asks the same question from seven angles (strands): constitutional, liberty, criminal and regulatory, equity, housing, employment and commerce, cross-border. A pattern weights the strands. Where two strands' top cases are in the same area with different outcomes, it says so: that is a conflict you need to deal with.</li><li>The match score averages the strands' top relevance, takes 8 off for each conflict, and labels the result. It measures how much of the bundled case set fits your words. It is not a prediction of the outcome.</li><li>Every function is tested, and a mutation gate flips each comparison and condition in the code to check a test notices. The build fails unless every flip is caught, or the gate records in writing why that flip cannot change any result.</li></ol>
+
+<h2 id="api">API</h2>
+<table><thead><tr><th>Export</th><th>What it does</th></tr></thead><tbody>
+<tr><td class="mono">CASE_DB · caseById · casesByArea · casesByStrand</td><td>The 31 cases, and lookups by id, area or strand.</td></tr>
+<tr><td class="mono">searchCases(query, area?, { limit })</td><td>Cases ranked by keyword relevance (default limit 8). Never throws: a non-string query returns [].</td></tr>
+<tr><td class="mono">runWeave(query, pattern?, { perStrand, aiComplete })</td><td>The 7-strand weave: top cases per strand, conflicts, and an optional synthesis if you pass your own model call.</td></tr>
+<tr><td class="mono">scoreRisk(weave)</td><td>STRONG, MODERATE, WEAK or MINIMAL (how well the cases match), with the percentage, a recommendation and what the number measures.</td></tr>
+<tr><td class="mono">draftDocument({ type, facts, parties, court, relief })</td><td>Particulars of claim, witness statement, skeleton argument, position statement, legal brief, compliance report or due diligence summary, with matching cases cited.</td></tr>
+<tr><td class="mono">auditCompliance(answers) · COMPLIANCE_RULES</td><td>The gaps your answers reveal across 13 rules, a score out of 100 (high gaps cost 15, medium 8) and a summary.</td></tr>
+<tr><td class="mono">WEAVE_PATTERNS · WEAVE_STRANDS · PATTERN_KEYS · STRAND_NAMES · DOC_TYPES · VERSION</td><td>The tables behind the functions.</td></tr>
+</tbody></table>
+
+<h2 id="blueprint">Blueprint</h2>
+<table><thead><tr><th>File</th><th>What is in it</th></tr></thead><tbody>
+<tr><td class="mono">src/cases.js</td><td>The 31 cases (identical to the page) and the lookups.</td></tr>
+<tr><td class="mono">src/search.js</td><td>searchCases, scoreCaseAgainst.</td></tr>
+<tr><td class="mono">src/weaves.js · src/weave.js</td><td>The patterns and strands; runWeave and scoreRisk.</td></tr>
+<tr><td class="mono">src/draft.js</td><td>The seven document formats.</td></tr>
+<tr><td class="mono">src/compliance.js</td><td>The 13 rules and auditCompliance.</td></tr>
+<tr><td class="mono">test/ · scripts/parity.mjs · witness.weave.baseline.json</td><td>34 tests, the parity check, and the one written exemption.</td></tr>
+</tbody></table>
+
+<h2 id="business">For your business</h2>
+<p>For a firm, an advice charity or a legal-tech team, this is the GroundLevel engine as something your own systems can call: a case finder, a structured first look at a problem, a compliance checklist and first drafts, inside your own software.</p>
+<div class="grid"><div class="card"><h3>Chief executive</h3><p>A legal triage step in your own product or intranet, without a per-seat research subscription for the first pass.</p></div><div class="card"><h3>Finance</h3><p>MIT licence, no licence fee, no usage charges: it runs on your machines, so there is no cloud bill either.</p></div><div class="card"><h3>Technology and security</h3><p>Plain JavaScript modules with no dependencies and no network calls: nothing to vet beyond the code itself, which is tested and mutation-gated on every push.</p></div><div class="card"><h3>Legal and compliance</h3><p>Every case note, rule and wording matches the GroundLevel page, and the build fails if they ever diverge, so you review one source, not two.</p></div><div class="card"><h3>Developers</h3><p>Import a function and call it; types of input are forgiving and garbage never throws.</p></div></div>
+<h3>What it costs, against what you pay now</h3>
+<p>There is no licence fee (MIT) and nothing metered. Against a per-seat legal research product, this does not replace the full reports and commentary; it replaces the first sort: which cases are likely relevant, where the authorities conflict, which compliance gaps your answers show, and a first draft to edit. The cost is your developers' time to wire it in.</p>
+<h3>Security and data protection</h3>
+<p>No network calls, no storage, no telemetry: the functions take your text and return results in memory. The only exception is optional and yours: if you pass your own <code>aiComplete</code> function, the weave or the draft is sent to whichever model you call there. Personal data you pass stays in your process.</p>
+<h3>Compliance</h3>
+<p>It does not give legal advice and does not make anyone a regulated adviser. The compliance check flags likely gaps against a fixed rule list; it is a checklist, not an audit. The Article 12 rule reflects the dates of Regulation (EU) 2026/1744: high-risk logging applies from 2 December 2027 (Annex III) or 2 August 2028 (Annex I products).</p>
+<h3>Deployment and roll-out</h3>
+<ol><li>Install from GitHub and pin a commit.</li><li>Call the functions from your back end or front end; start with searchCases and auditCompliance.</li><li>Have a solicitor review the output wording you show users.</li><li>Run <code>npm run parity</code> before each upgrade to confirm the SDK still matches the live page.</li></ol>
+<h3>Support and ownership</h3>
+<p>Supplied by <a href="https://www.ai-nativesolutions.com">AI Native Solutions</a>. Support, service levels, warranty and liability are agreed per deployment, in that deployment's agreement. The code is MIT-licensed: there is no licence fee, you hold a copy, and it keeps working without us.</p>
+<h3>The case for the board</h3>
+<p>A small, owned, auditable component: the code is yours under MIT, every change is tested and mutation-gated on a public CI record, and it cannot quietly drift from the product it came from. It shortens the first step of legal triage; people still make the decisions.</p>
+
+<h2 id="risks">Risks, answered straight</h2>
+<ul><li>The 31 cases are short summaries, not the judgments. Two of them (Spencer v Taylor and Caridon) are about section 21, which was abolished for private tenancies in England on 1 May 2026; both are marked historical.</li><li>The match percentage measures keyword relevance against 31 cases. It is not a probability of success and the page says so.</li><li>The compliance rules are a fixed checklist. A clean score means none of these 13 gaps applies to your answers, not that you are compliant.</li><li>The drafts are templates to edit, not finished court documents.</li></ul>
+
+<h2 id="proof">Proof</h2>
+<p>Every push runs the gate on GitHub's own machines: <a href="https://github.com/sjgant80-hub/groundlevel-sdk/actions">the run history is public</a>, so you can check each claim below rather than trust it.</p>
+<table><thead><tr><th>Check</th><th>Result at this release</th></tr></thead><tbody>
+<tr><td class="mono">Tests</td><td>34 pass (node --test)</td></tr>
+<tr><td class="mono">Mutation gate (witness v0.6)</td><td>cases 5/5 · search 12/12 · weave 19/20 with 1 written exemption · draft 8/8 · compliance 58/58: clean</td></tr>
+<tr><td class="mono">Fuzz</td><td>searchCases, scoreCaseAgainst, scoreRisk and auditCompliance never throw on garbage input</td></tr>
+<tr><td class="mono">Parity with the live page</td><td>31 cases, 10 patterns, 7 strands, 13 rules (verdicts on 4,000 inputs) and the match wording identical</td></tr>
+<tr><td class="mono">Dependencies · network calls</td><td>none · none</td></tr>
+</tbody></table>
+
+<h2 id="paper">The explainer</h2>
+<p>Most "SDKs" that sit next to a product page are a copy that drifts: the page gets fixed, the copy does not. This one cannot drift unnoticed. The parity check reads the published page and compares it, piece by piece, with the modules here; CI runs it on every push and every week.</p>
+<p>The second problem with copied code is that nobody knows whether its tests test anything. The mutation gate answers that: it breaks the code on purpose, one comparison at a time, and fails the build if the tests still pass. When this SDK was repaired in November 2026, the inherited tests caught 25 of 104 such breaks. The current code has 103; the new tests catch 102, and the gate has a written reason for the last: a loop bound that cannot change any result.</p>
+<p>The repair also corrected the product: the score used to print "estimated success rates" (70-95%, 40-65%, 15-35%) that nothing had measured, and the Article 12 rule gave an AI Act date that the Digital Omnibus moved. Both the page and the SDK now say what is actually measured, and when the rule actually applies.</p>
+
+<footer>
+<p>groundlevel-sdk v1.1.0 · MIT, © Simon Gant · <a href="https://github.com/sjgant80-hub/groundlevel-sdk">source</a> · <a href="https://sjgant80-hub.github.io/groundlevel/">the GroundLevel page</a> · supplied by <a href="https://www.ai-nativesolutions.com">AI Native Solutions</a></p>
+</footer>
+</main>
+<script>
+(function () {
+  var b = document.getElementById('theme'), r = document.documentElement;
+  try { var t = localStorage.getItem('theme'); if (t) r.setAttribute('data-theme', t); } catch (e) {}
+  b.addEventListener('click', function () {
+    var dark = r.getAttribute('data-theme') ? r.getAttribute('data-theme') === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    var next = dark ? 'light' : 'dark'; r.setAttribute('data-theme', next);
+    try { localStorage.setItem('theme', next); } catch (e) {}
+  });
+})();
+</script>
+<script type="module">
+import * as sdk from './src/index.js';
+const $ = (id) => document.getElementById(id);
+const show = (id, v) => { $(id).textContent = typeof v === 'string' ? v : JSON.stringify(v, null, 2); };
+for (const k of sdk.PATTERN_KEYS) { const o = document.createElement('option'); o.value = k; o.textContent = k.replace(/_/g, ' '); $('pat').appendChild(o); }
+$('go').addEventListener('click', async () => {
+  const q = $('q').value, hits = sdk.searchCases(q, $('area').value || undefined, { limit: 5 });
+  const w = await sdk.runWeave(q, $('pat').value || undefined), r = sdk.scoreRisk(w);
+  const lines = ['Top cases:', ...(hits.length ? hits.map((c) => '  ' + c._score + ' · ' + c.citation + ': ' + c.principle) : ['  none matched'])];
+  lines.push('', 'Weave (top case per strand):', ...w.results.map((s) => '  ' + s.strand.padEnd(9) + (s.cases[0] ? s.cases[0].citation : '-')));
+  lines.push('', 'Conflicting strands: ' + (w.contradictions.length ? w.contradictions.map((c) => c.a + '/' + c.b + ' (' + c.area + ')').join(', ') : 'none'));
+  lines.push('', 'Authority match: ' + r.label + ' · ' + r.pct + '%', r.recommendation, r.basis);
+  show('out', lines.join('\n'));
+});
+$('audit').addEventListener('click', () => {
+  const a = sdk.auditCompliance({ ca_uses_ai: $('c-ai').value, ca_eu_users: $('c-eu').value, ca_audit_log: $('c-log').value, ca_size: $('c-size').value, ca_breach_plan: $('c-bp').value, ca_personal_data: 'standard', ca_dpa: 'yes', ca_privacy_policy: 'yes', ca_dsar_process: 'documented', ca_records: 'yes', ca_employment_contracts: 'yes', ca_handbook: 'yes', ca_t_and_c: 'recent', ca_subscription: 'no', ca_health_safety: 'yes', ca_cyber: 'none' });
+  show('aout', a.summary + '\n\n' + (a.gaps.map((g) => '[' + g.severity + '] ' + g.framework + ': ' + g.gap + '\n  → ' + g.remedy).join('\n\n') || 'No gaps against these rules.'));
+});
+</script>
+</body>
+</html>

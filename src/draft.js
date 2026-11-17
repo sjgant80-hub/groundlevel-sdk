@@ -20,11 +20,12 @@ export const DOC_TYPES = [
  * @returns {Promise<{draft:string, citations:Case[]}>}
  */
 export async function draftDocument(input, opts = {}) {
-  const type = input.type || 'legal_brief';
-  const facts = input.facts || '';
-  const parties = input.parties || '[Claimant] v [Defendant]';
-  const court = input.court || 'COUNTY COURT';
-  const relief = input.relief || '[set out the orders sought]';
+  const inp = Object(input), o = Object(opts);
+  const type = inp.type || 'legal_brief';
+  const facts = String(inp.facts || '');
+  const parties = inp.parties || '[Claimant] v [Defendant]';
+  const court = inp.court || 'COUNTY COURT';
+  const relief = inp.relief || '[set out the orders sought]';
 
   const cases = searchCases(facts, undefined, { limit: 4 });
   const citationList = cases.map(c => `· ${c.citation} — ${c.principle}`).join('\n');
@@ -40,12 +41,12 @@ export async function draftDocument(input, opts = {}) {
     due_diligence: `DUE DILIGENCE SUMMARY\n\nTarget: [name]\nScope: ${facts.slice(0, 200)}\nDate: ${today}\n\nFINDINGS\n${facts}\n\nLEGAL RISK SUMMARY\n${citationList}\n\nFLAGS\n· [material flag 1]\n· [material flag 2]\n\nRECOMMENDED CONDITIONS\n· [warranty / indemnity / escrow term]\n\nDated: ____________________`,
   };
 
-  let draft = FORMATS[type] || FORMATS.legal_brief;
+  let draft = Object.hasOwn(FORMATS, type) ? FORMATS[type] : FORMATS.legal_brief;
 
-  if (typeof opts.aiComplete === 'function') {
+  if (typeof o.aiComplete === 'function') {
     const sys = `You are GroundLevel Pro's document drafter. Take the user's draft template and tighten the prose to court-ready legal English. Preserve citations exactly. Don't invent facts. Format for A4 print.`;
     try {
-      const enhanced = await opts.aiComplete(sys, draft);
+      const enhanced = await o.aiComplete(sys, draft);
       if (enhanced) draft = enhanced;
     } catch (e) { /* swallow · enhancement is optional */ }
   }
