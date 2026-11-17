@@ -998,36 +998,29 @@ This is an emergency. Please respond within 24 hours.
   },
   {
     id: 'section_21_response',
-    title: 'Section 21 notice · challenge prescribed-information defects',
+    title: 'Section 21 notice · no longer valid in England (from 1 May 2026)',
     category: 'housing',
     jurisdiction: 'UK',
-    cite: 'Housing Act 1988 s.21 · Deregulation Act 2015 · Assured Shorthold Tenancies (Notices and Prescribed Requirements) (England) Regulations 2015',
+    cite: 'Renters\' Rights Act 2025 · Housing Act 1988 s.8 and Sch.2 (as amended) · Housing Act 2004 ss.213-215',
     cost: 'Free',
-    what_it_does: 'A landlord cannot use Section 21 unless they have given you (a) gas safety certificate, (b) energy performance certificate, (c) "How to Rent" booklet, (d) deposit-protection prescribed information. ANY missing item invalidates the Section 21. This letter forces them to disclose or withdraw.',
-    body: `CHALLENGE TO SECTION 21 NOTICE
+    what_it_does: 'Since 1 May 2026 a landlord in England cannot end a private tenancy with a section 21 notice: every private tenancy is now an assured periodic tenancy, and the landlord needs a legal ground under section 8, a notice on Form 3A and a court order. Court claims on section 21 notices served before 1 May 2026 had to be started by 31 July 2026. This letter tells your landlord so and asks them to confirm in writing. Wales and Scotland have their own rules.',
+    body: `SECTION 21 NOTICE · NO LONGER VALID
+
 To: {{landlord_or_agent}}
 From: {{your_name}}, tenant at {{property_address}}
 Date: {{today}}
+
 You served notice on me dated {{s21_date}} purporting to be a notice under section 21 of the Housing Act 1988.
-PRELIMINARY ISSUES YOU MUST ADDRESS BEFORE THIS NOTICE IS VALID
-Under the Deregulation Act 2015 and the Assured Shorthold Tenancies (Notices and Prescribed Requirements) (England) Regulations 2015, a section 21 notice is INVALID unless the landlord has provided the following:
-  1. A current Gas Safety Certificate (CP12) at the start of the tenancy and any time the boiler/appliance was changed.
-     Date you provided to me: {{gas_safety_date_or_none}}
-  2. An Energy Performance Certificate (EPC).
-     Date you provided to me: {{epc_date_or_none}}
-  3. The current "How to Rent" booklet published by the government.
-     Date you provided to me: {{htr_date_or_none}}
-  4. Prescribed information in respect of the tenancy deposit scheme.
-     Date you provided to me: {{tdp_info_date_or_none}}
-I confirm I have / have not received each of the above.
-ITEMS MISSING
-{{missing_items}}
-CONSEQUENCE
-Until all of the above have been validly provided, your section 21 notice has no effect. If you proceed to issue possession proceedings on the basis of this defective notice, I will defend on the basis of the missing prescribed information and seek my costs.
-I am also entitled to require return of the tenancy if the deposit was not protected in an authorised scheme within 30 days. Please confirm in writing within 14 days:
-  · whether you intend to rely on the section 21 notice
-  · whether you accept it is defective
-  · what date you propose to withdraw or re-serve
+
+Since 1 May 2026, under the Renters' Rights Act 2025, section 21 can no longer be used to end a private tenancy in England. My tenancy is now an assured periodic tenancy. A section 21 notice served on or after 1 May 2026 has no effect, and possession claims on a section 21 notice served before 1 May 2026 had to be started by 31 July 2026.
+
+To end my tenancy you would need a ground for possession under section 8 of the Housing Act 1988, a notice on the prescribed Form 3A giving the notice period that ground requires, and an order of the court. You cannot make me leave without a court order.
+
+The court will also only make a possession order if any deposit I paid was protected in a government-approved scheme with the prescribed information given to me, or has been returned.
+Deposit protection information you gave me: {{tdp_info_date_or_none}}
+
+Please confirm in writing within 14 days that you will not rely on the section 21 notice.
+
 {{your_name}}`,
   },
   /* ──────── CONSUMER RIGHTS ──────── */
@@ -2113,8 +2106,8 @@ const MODULES = [
       {
         kind: 'letter',
         template: 'section_21_response',
-        heading: 'Section 21 challenge · prescribed-information defects',
-        body: 'If your landlord failed to provide gas safety cert, EPC, How to Rent booklet, or deposit-protection information, their Section 21 is INVALID. This letter forces them to disclose or withdraw.',
+        heading: 'Section 21 notice · no longer valid in England',
+        body: 'Since 1 May 2026 a landlord in England cannot end a private tenancy with a section 21 notice: they need a legal ground, a notice on Form 3A and a court order. This letter tells them so and asks them to confirm in writing.',
       },
     ],
   },
@@ -2702,8 +2695,8 @@ const MODULES = [
 const CASE_DB = [
   /* HOUSING / LANDLORD & TENANT */
   { id: 'tiensia-2010', citation: 'Tiensia v Vision Enterprises Ltd [2010] EWCA Civ 1224', court: 'Court of Appeal', year: 2010, area: 'housing', sub: 'deposit', summary: 'Landlord who fails to protect tenant deposit in approved scheme must repay 1-3x the deposit amount.', principle: 'Strict liability for non-protection of deposit.', statute: 'Housing Act 2004 ss.213-215', tags: ['deposit','landlord','tenant','penalty'], outcome: 'tenant', strands: ['HEARTH','EQUITY'] },
-  { id: 'spencer-taylor-2013', citation: 'Spencer v Taylor [2013] EWCA Civ 1600', court: 'Court of Appeal', year: 2013, area: 'housing', sub: 's21', summary: 'Section 21 notice must comply strictly with prescribed form and information.', principle: 'Prescribed information defects invalidate S21.', statute: 'Housing Act 1988 s.21 · Deregulation Act 2015', tags: ['section21','notice','prescribed'], outcome: 'tenant', strands: ['HEARTH','EQUITY'] },
-  { id: 'caridon-2018', citation: 'Caridon Property Ltd v Monty Shooltz [2018]', court: 'County Court', year: 2018, area: 'housing', sub: 'gas_safety', summary: 'Gas Safety Certificate must be provided BEFORE tenant occupation · later provision does not cure defect for s21 purposes.', principle: 'Pre-tenancy CP12 is non-curable condition for s21.', statute: 'Gas Safety (Installation & Use) Regs 1998 · Housing Act 1988 s.21A', tags: ['gas','safety','section21','cp12'], outcome: 'tenant', strands: ['HEARTH','LIBERTY'] },
+  { id: 'spencer-taylor-2013', citation: 'Spencer v Taylor [2013] EWCA Civ 1600', court: 'Court of Appeal', year: 2013, area: 'housing', sub: 's21', summary: 'Once a fixed-term assured shorthold tenancy had become a statutory periodic tenancy, the landlord could rely on a section 21(1)(b) notice; the tenant\'s appeal was dismissed. Historical: section 21 was abolished for private tenancies in England from 1 May 2026 (Renters\' Rights Act 2025).', principle: 'Section 21(1) and 21(4) are not mutually exclusive once a fixed term ends.', statute: 'Housing Act 1988 s.21 (abolished for private tenancies in England from 1 May 2026)', tags: ['section21','notice','periodic'], outcome: 'landlord', strands: ['HEARTH','EQUITY'] },
+  { id: 'caridon-2018', citation: 'Caridon Property Ltd v Monty Shooltz [2018]', court: 'County Court', year: 2018, area: 'housing', sub: 'gas_safety', summary: 'Held that a gas safety certificate not given before the tenant moved in could not be put right later for section 21 purposes. Not followed: in Trecarrell House Ltd v Rouncefield [2020] EWCA Civ 760 the Court of Appeal held, by a majority, that giving it late but before the notice was enough. Historical: section 21 was abolished for private tenancies in England from 1 May 2026.', principle: 'Superseded by Trecarrell (2020): a gas safety record given late, but before the notice, cured the defect.', statute: 'Gas Safety (Installation & Use) Regs 1998 · Housing Act 1988 s.21A', tags: ['gas','safety','section21','cp12'], outcome: 'tenant', strands: ['HEARTH','LIBERTY'] },
   { id: 'charalambous-2014', citation: 'Charalambous v Maureen Rosairie Ng [2014] EWCA Civ 1604', court: 'Court of Appeal', year: 2014, area: 'housing', sub: 'deposit', summary: 'Deposit-protection rules apply retrospectively to deposits taken before April 2007 if tenancy continues.', principle: 'Retrospective application of protection scheme rules.', statute: 'Housing Act 2004', tags: ['deposit','retrospective'], outcome: 'tenant', strands: ['HEARTH'] },
   { id: 'spath-holme-2001', citation: 'R (Spath Holme) v SoS [2001] 2 AC 349', court: 'House of Lords', year: 2001, area: 'housing', sub: 'rent_control', summary: 'Limits on ministerial rent-cap powers · statutory construction principles for housing legislation.', principle: 'Statutory construction · housing legislation purpose.', statute: 'Landlord & Tenant Act 1985', tags: ['rent','statutory','construction'], outcome: 'mixed', strands: ['MAGNA','HEARTH'] },
   /* EMPLOYMENT */
